@@ -6,6 +6,7 @@ use gpui_kit::{
 };
 
 use crate::system::Monitor;
+use crate::ui::activity::ActivityPage;
 use crate::ui::memory::MemoryPage;
 use crate::ui::placeholder::Placeholder;
 
@@ -49,6 +50,20 @@ impl Page {
     }
 }
 
+impl std::str::FromStr for Page {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Page::ALL
+            .into_iter()
+            .find(|page| page.title().eq_ignore_ascii_case(s))
+            .ok_or_else(|| {
+                let names: Vec<_> = Page::ALL.iter().map(|p| p.title().to_lowercase()).collect();
+                format!("unknown page `{s}`, expected one of: {}", names.join(", "))
+            })
+    }
+}
+
 pub struct AppShell {
     page: Page,
     views: PageViews,
@@ -74,18 +89,20 @@ impl PageViews {
 }
 
 impl AppShell {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(initial: Page, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let monitor = cx.new(Monitor::new);
         let placeholder = |page: Page, cx: &mut Context<Self>| -> AnyView {
             cx.new(|_| Placeholder::new(page)).into()
         };
         Self {
-            page: Page::Memory,
+            page: initial,
             views: PageViews {
                 memory: cx
                     .new(|cx| MemoryPage::new(monitor.clone(), window, cx))
                     .into(),
-                activity: placeholder(Page::Activity, cx),
+                activity: cx
+                    .new(|cx| ActivityPage::new(monitor.clone(), window, cx))
+                    .into(),
                 storage: placeholder(Page::Storage, cx),
                 devices: placeholder(Page::Devices, cx),
             },

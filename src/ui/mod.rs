@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod memory;
 pub mod placeholder;
 pub mod process_table;

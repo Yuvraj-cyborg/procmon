@@ -13,6 +13,10 @@ use super::snapshot::{
 };
 use crate::units::{Bytes, Percent, Pid, Rate, ThreadId, Throughput};
 
+/// Extra room in the thread-list buffer for threads spawned between the task
+/// query and the thread listing.
+const THREAD_SLACK: u32 = 16;
+
 /// Collects [`Snapshot`]s. Holds the previous readings needed to turn
 /// cumulative kernel counters into per-second rates.
 pub struct Sampler {
@@ -78,7 +82,7 @@ impl Sampler {
                     .map(|(now, before)| activity_between(before, &now, elapsed));
                 if let Some(counters) = counters {
                     next_counters.insert(pid, counters);
-                    if let Some(samples) = platform::threads(pid, counters.threads) {
+                    if let Some(samples) = platform::threads(pid, counters.threads + THREAD_SLACK) {
                         self.threads
                             .observe(pid, &name, &samples, now, &mut thread_alerts);
                     }
@@ -334,6 +338,25 @@ mod tests {
             snapshot.memory.total.binary(),
         );
         assert!(!snapshot.processes.is_empty());
+    }
+
+    /// Watches one process for alerts, e.g. while running `yes > /dev/null`:
+    /// `PROBE_PID=$(pgrep -x yes) cargo test alerts_live -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn alerts_live() {
+        let pid = Pid(std::env::var("PROBE_PID").unwrap().parse().unwrap());
+        let mut sampler = Sampler::new();
+        for _ in 0..13 {
+            let snapshot = sampler.sample();
+            let alerts: Vec<_> = snapshot
+                .thread_alerts
+                .iter()
+                .filter(|a| a.pid == pid)
+                .collect();
+            println!("{alerts:?}");
+            std::thread::sleep(Duration::from_secs(1));
+        }
     }
 
     #[test]
