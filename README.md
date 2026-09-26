@@ -80,7 +80,9 @@ Without Nix you need Rust (the version in `rust-toolchain.toml` is picked up aut
 
 ### Binary size
 
-Release builds are tuned for size: `opt-level = "z"`, fat LTO, one codegen unit, `panic = "abort"` and stripped symbols (25.3 MB → 7.4 MB). With rustup available, `scripts/build-release.sh` goes further using a pinned nightly to rebuild `std` for size (immediate-abort panics, no panic location strings, std's size-optimised paths), bringing the macOS binary to about 6.2 MB. The DMG compresses that to ~3 MB. Nearly all of what remains is GPUI and its component library, so this is close to the floor for a GPUI app.
+Release builds are tuned for size: `opt-level = "z"`, fat LTO, one codegen unit, `panic = "abort"` and stripped symbols (25.3 MB → 7.4 MB). With rustup available, `scripts/build-release.sh` goes further using a pinned nightly to rebuild `std` for size (immediate-abort panics, no panic location strings, std's size-optimised paths), bringing the macOS binary to about 6.2 MB. The DMG compresses that to ~2.7 MB. Nearly all of what remains is GPUI and its component library, so this is close to the floor for a GPUI app.
+
+The Linux binary is larger (~18 MB) because GPUI renders through wgpu there (Vulkan and GL backends plus the naga shader compiler) and talks to desktop portals over D-Bus; the `.deb` is ~5.4 MB.
 
 ### Command-line options
 

@@ -39,7 +39,14 @@ if [[ "$identity" != "-" ]]; then
   fi
 
   if (( ${#notary_args[@]} )); then
-    xcrun notarytool submit "$dmg" "${notary_args[@]}" --wait --timeout 30m
+    result=$(xcrun notarytool submit "$dmg" "${notary_args[@]}" --wait --timeout 30m --output-format json)
+    echo "$result"
+    status=$(plutil -extract status raw -o - - <<< "$result")
+    if [[ "$status" != "Accepted" ]]; then
+      xcrun notarytool log "$(plutil -extract id raw -o - - <<< "$result")" "${notary_args[@]}" >&2
+      echo "notarization finished with status: $status" >&2
+      exit 1
+    fi
     xcrun stapler staple "$dmg"
     xcrun stapler validate "$dmg"
   else
