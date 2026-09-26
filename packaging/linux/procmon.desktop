@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Procmon
+Comment=Memory, CPU, storage and device monitor
+Exec=procmon
+Icon=procmon
+Terminal=false
+Categories=System;Monitor;Utility;
+Keywords=process;memory;cpu;disk;storage;monitor;
+StartupWMClass=procmon
