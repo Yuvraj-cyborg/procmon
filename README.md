@@ -1,6 +1,10 @@
+<p align="center"><img src="assets/icon/procmon-512.png" width="128" alt="Procmon icon"></p>
+
 # Procmon
 
-A small, native system monitor for macOS, built in Rust with [GPUI](https://github.com/zed-industries/zed) (Zed's GPU UI framework) and [GPUI Kit](https://gpui-kit.com) components.
+A small, native system monitor for macOS, built in Rust with [GPUI](https://github.com/zed-industries/zed) (Zed's GPU UI framework) and [GPUI Kit](https://gpui-kit.com) components. The whole app downloads as a ~3 MB DMG.
+
+<p align="center"><img src="docs/image.png" alt="Procmon showing memory usage by app"></p>
 
 It answers four questions quickly:
 
@@ -45,13 +49,38 @@ It answers four questions quickly:
 - Scales with the window: layouts wrap, and the sidebar collapses to icons below 900 px.
 - Settings (theme, group-by-app) persist in `~/Library/Application Support/Procmon/settings.json`.
 
-## Build and run
+## Install
 
-Requirements: macOS with the Xcode command-line tools, and a recent stable Rust toolchain (edition 2024).
+Download the latest build from [Releases](https://github.com/Yuvraj-cyborg/procmon/releases):
+
+- **macOS:** `Procmon-<version>-macos-arm64.dmg` (Apple silicon) or `…-x86_64.dmg` (Intel). Open it and drag Procmon into Applications.
+- **Linux:** `procmon-<version>-linux-<arch>.tar.gz` (run `./install.sh` inside it), or the `.deb` for Debian/Ubuntu.
+
+## Build from source
+
+With [Nix](https://nixos.org) (flakes enabled), everything is pinned:
 
 ```sh
-cargo run --release
+nix develop          # Rust 1.98.1, node, resvg, pngquant, oxipng, cargo-bloat
+make install         # build, bundle and copy Procmon.app into /Applications
+nix build            # or build the package itself (result/Applications/Procmon.app)
 ```
+
+Without Nix you need Rust (the version in `rust-toolchain.toml` is picked up automatically by rustup) and, on macOS, the Xcode command-line tools.
+
+| Command | Result |
+| --- | --- |
+| `make run` | Debug build, launched |
+| `make build` | Size-optimised release binary in `target/<triple>/release/` |
+| `make app` | `dist/Procmon.app` (ad-hoc signed; set `SIGN_IDENTITY` to use a Developer ID) |
+| `make install` | Copies `Procmon.app` into `/Applications` |
+| `make dmg` | `dist/Procmon-<version>-macos-<arch>.dmg` |
+| `make linux` | `dist/procmon-<version>-linux-<arch>.tar.gz` |
+| `make icon` | Regenerates the icon from `scripts/icon/generate.mjs` |
+
+### Binary size
+
+Release builds are tuned for size: `opt-level = "z"`, fat LTO, one codegen unit, `panic = "abort"` and stripped symbols (25.3 MB → 7.4 MB). With rustup available, `scripts/build-release.sh` goes further using a pinned nightly to rebuild `std` for size (immediate-abort panics, no panic location strings, std's size-optimised paths), bringing the macOS binary to about 6.2 MB. The DMG compresses that to ~3 MB. Nearly all of what remains is GPUI and its component library, so this is close to the floor for a GPUI app.
 
 ### Command-line options
 
@@ -107,11 +136,30 @@ src/
   storage/             scanner, file tree arena, squarified treemap, trash
   devices/             device and driver inventory
   ui/                  pages, tables, detail sheet, widgets
+scripts/               release build, macOS bundle/DMG, Linux packaging, icon, CI helpers
+packaging/             Info.plist template, Linux desktop entry and installer
+flake.nix              pinned toolchain, dev shell and package
 ```
 
 ## Platform support
 
-Procmon is built for macOS. The code is split so other platforms compile against a fallback, where memory, CPU, process and disk-scan features work through `sysinfo`. Thread states, kernel counters, per-process network, devices and Trash are macOS-only for now, and non-macOS builds are untested.
+Procmon is built for macOS first. Linux x86_64 and aarch64 builds are produced by CI; there, memory, CPU, processes and disk scans work through `sysinfo`, while thread states, kernel counters, per-process network, the device inventory and Trash are macOS-only for now. Windows builds are planned; the disk scanner and process control still need Windows implementations.
+
+## Releases and signing
+
+Pushing a tag like `v0.1.0` runs `.github/workflows/release.yml`, which builds all four targets and publishes a GitHub release with SHA-256 checksums. It can also be started by hand from the Actions tab to test packaging without publishing.
+
+macOS DMGs are signed with a Developer ID and notarized when these repository secrets exist, and ad-hoc signed otherwise:
+
+| Secret | Contents |
+| --- | --- |
+| `APPLE_CERTIFICATE_P12` | Base64 of your exported "Developer ID Application" certificate (.p12) |
+| `APPLE_CERTIFICATE_PASSWORD` | The password chosen when exporting it |
+| `APPLE_SIGNING_IDENTITY` | Optional; defaults to the first Developer ID in the certificate |
+| `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` | App Store Connect API key for notarization (recommended) |
+| `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` | Or: Apple ID with an app-specific password |
+
+`scripts/ci/set-github-secrets.sh path/to/certificate.p12` sets them for you with the GitHub CLI.
 
 ## Tests
 
