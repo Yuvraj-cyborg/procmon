@@ -5,4 +5,4 @@ mod platform;
 mod sampler;
 pub mod snapshot;
 
-pub use monitor::{History, Monitor};
+pub use monitor::Monitor;

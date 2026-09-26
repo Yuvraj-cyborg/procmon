@@ -2,8 +2,9 @@
 
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, FontWeight, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
-    div, prelude::FluentBuilder as _, px, relative,
+    AnyElement, App, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, PathBuilder,
+    Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, canvas,
+    div, point, prelude::FluentBuilder as _, px, relative,
 };
 
 use crate::units::Ratio;
@@ -42,7 +43,12 @@ impl RenderOnce for PageHeader {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(self.title))
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(self.title),
+                    )
                     .child(
                         div()
                             .text_sm()
@@ -52,6 +58,17 @@ impl RenderOnce for PageHeader {
             )
             .child(h_flex().gap_2().children(self.actions))
     }
+}
+
+/// Vertically scrolling page body. Children laid out in a column that is at
+/// least as tall as the viewport, so a `flex_1` child fills leftover space on
+/// tall windows and the page scrolls on short ones.
+pub fn page_scroll(id: &'static str) -> gpui_kit::Stateful<gpui_kit::Div> {
+    div().id(id).size_full().overflow_y_scroll()
+}
+
+pub fn page_body() -> gpui_kit::Div {
+    v_flex().min_h_full().p_6().gap_4()
 }
 
 /// A bordered surface used to group related content.
@@ -171,11 +188,86 @@ impl RenderOnce for Stat {
                     .children(self.dot.map(|c| div().size_2().rounded_full().bg(c)))
                     .child(self.label),
             )
-            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(self.value))
+            .child(
+                div()
+                    .text_xl()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(self.value),
+            )
             .children(
                 self.hint
                     .map(|hint| div().text_xs().text_color(muted).child(hint)),
             )
+    }
+}
+
+/// Filled line chart over a fixed `0..=1` range, sized by its container.
+#[derive(IntoElement)]
+pub struct Sparkline {
+    values: Vec<Ratio>,
+    capacity: usize,
+    color: Hsla,
+}
+
+impl Sparkline {
+    /// `capacity` is the number of slots on the x axis, so a partially filled
+    /// history grows in from the right instead of stretching.
+    pub fn new(values: impl IntoIterator<Item = Ratio>, capacity: usize, color: Hsla) -> Self {
+        Self {
+            values: values.into_iter().collect(),
+            capacity: capacity.max(2),
+            color,
+        }
+    }
+}
+
+impl RenderOnce for Sparkline {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let Sparkline {
+            values,
+            capacity,
+            color,
+        } = self;
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                if values.len() < 2 {
+                    return;
+                }
+                let step = bounds.size.width / (capacity - 1) as f32;
+                let offset = capacity - values.len();
+                let points: Vec<Point<Pixels>> = values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        let x = bounds.origin.x + step * (offset + i) as f32;
+                        let y = bounds.origin.y + bounds.size.height * (1.0 - v.as_f32());
+                        point(x, y)
+                    })
+                    .collect();
+
+                let mut area = PathBuilder::fill();
+                area.move_to(point(points[0].x, bounds.bottom()));
+                for p in &points {
+                    area.line_to(*p);
+                }
+                area.line_to(point(points[points.len() - 1].x, bounds.bottom()));
+                area.close();
+                if let Ok(path) = area.build() {
+                    window.paint_path(path, color.opacity(0.14));
+                }
+
+                let mut line = PathBuilder::stroke(px(1.5));
+                line.move_to(points[0]);
+                for p in &points[1..] {
+                    line.line_to(*p);
+                }
+                if let Ok(path) = line.build() {
+                    window.paint_path(path, color);
+                }
+            },
+        )
+        .size_full()
     }
 }
 

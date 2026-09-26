@@ -271,7 +271,10 @@ mod tests {
     fn bytes_format_binary_and_decimal() {
         assert_eq!(Bytes(512).binary().to_string(), "512 B");
         assert_eq!(Bytes(1536).binary().to_string(), "1.50 KB");
-        assert_eq!(Bytes(16 * 1024 * 1024 * 1024).binary().to_string(), "16.0 GB");
+        assert_eq!(
+            Bytes(16 * 1024 * 1024 * 1024).binary().to_string(),
+            "16.0 GB"
+        );
         assert_eq!(Bytes(500_000_000_000).decimal().to_string(), "500 GB");
     }
 
@@ -294,7 +297,10 @@ mod tests {
     #[test]
     fn durations_are_compact() {
         assert_eq!(compact_duration(Duration::from_secs(42)), "42s");
-        assert_eq!(compact_duration(Duration::from_secs(3 * 3600 + 120)), "3h 2m");
+        assert_eq!(
+            compact_duration(Duration::from_secs(3 * 3600 + 120)),
+            "3h 2m"
+        );
         assert_eq!(compact_duration(Duration::from_secs(90_000)), "1d 1h");
     }
 }

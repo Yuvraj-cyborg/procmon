@@ -12,28 +12,37 @@ use crate::app::AppShell;
 use crate::assets::AppAssets;
 
 fn main() {
-    gpui_kit::application()
-        .with_assets(AppAssets)
-        .run(|cx| {
-            gpui_kit::init(cx);
+    gpui_kit::application().with_assets(AppAssets).run(|cx| {
+        gpui_kit::init(cx);
 
-            let bounds = Bounds::centered(None, size(px(1180.), px(780.)), cx);
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(720.), px(480.))),
-                ..TitleBar::window_options()
-            };
-
-            cx.spawn(async move |cx| {
-                cx.open_window(options, |window, cx| {
-                    if let Err(err) = theme::init(window, cx) {
-                        eprintln!("procmon: falling back to default theme: {err:#}");
-                    }
-                    let shell = cx.new(|cx| AppShell::new(window, cx));
-                    cx.new(|cx| Root::new(shell, window, cx))
-                })
-                .expect("failed to open main window");
+        let preferred = size(px(1180.), px(800.));
+        let window_size = cx
+            .primary_display()
+            .map(|display| {
+                let screen = display.bounds().size;
+                size(
+                    preferred.width.min(screen.width * 0.92),
+                    preferred.height.min(screen.height * 0.92),
+                )
             })
-            .detach();
-        });
+            .unwrap_or(preferred);
+        let bounds = Bounds::centered(None, window_size, cx);
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(720.), px(480.))),
+            ..TitleBar::window_options()
+        };
+
+        cx.spawn(async move |cx| {
+            cx.open_window(options, |window, cx| {
+                if let Err(err) = theme::init(window, cx) {
+                    eprintln!("procmon: falling back to default theme: {err:#}");
+                }
+                let shell = cx.new(|cx| AppShell::new(window, cx));
+                cx.new(|cx| Root::new(shell, window, cx))
+            })
+            .expect("failed to open main window");
+        })
+        .detach();
+    });
 }

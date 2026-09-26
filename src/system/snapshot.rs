@@ -139,8 +139,16 @@ impl ActivityRates {
     pub fn noise_reasons(&self) -> Vec<NoiseReason> {
         [
             (self.syscalls, Self::SYSCALLS, NoiseReason::Syscalls),
-            (self.context_switches, Self::CONTEXT_SWITCHES, NoiseReason::ContextSwitches),
-            (self.mach_messages, Self::MACH_MESSAGES, NoiseReason::MachMessages),
+            (
+                self.context_switches,
+                Self::CONTEXT_SWITCHES,
+                NoiseReason::ContextSwitches,
+            ),
+            (
+                self.mach_messages,
+                Self::MACH_MESSAGES,
+                NoiseReason::MachMessages,
+            ),
             (self.idle_wakeups, Self::WAKEUPS, NoiseReason::Wakeups),
             (self.page_faults, Self::PAGE_FAULTS, NoiseReason::PageFaults),
         ]

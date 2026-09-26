@@ -1,9 +1,12 @@
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Root, TitleBar, h_flex, v_flex};
 use gpui_kit::{
-    AnyView, AppContext as _, Context, IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
+    AnyView, AppContext as _, Context, IntoElement, ParentElement, Render, SharedString, Styled,
+    Window, div,
 };
 
+use crate::system::Monitor;
+use crate::ui::memory::MemoryPage;
 use crate::ui::placeholder::Placeholder;
 
 /// A top-level destination in the sidebar.
@@ -71,14 +74,17 @@ impl PageViews {
 }
 
 impl AppShell {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let monitor = cx.new(Monitor::new);
         let placeholder = |page: Page, cx: &mut Context<Self>| -> AnyView {
             cx.new(|_| Placeholder::new(page)).into()
         };
         Self {
             page: Page::Memory,
             views: PageViews {
-                memory: placeholder(Page::Memory, cx),
+                memory: cx
+                    .new(|cx| MemoryPage::new(monitor.clone(), window, cx))
+                    .into(),
                 activity: placeholder(Page::Activity, cx),
                 storage: placeholder(Page::Storage, cx),
                 devices: placeholder(Page::Devices, cx),

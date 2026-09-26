@@ -73,9 +73,9 @@ impl Sampler {
                     Some(_) => coverage.inspected += 1,
                     None => coverage.denied += 1,
                 }
-                let activity = counters.zip(self.counters.get(&pid)).map(|(now, before)| {
-                    activity_between(before, &now, elapsed)
-                });
+                let activity = counters
+                    .zip(self.counters.get(&pid))
+                    .map(|(now, before)| activity_between(before, &now, elapsed));
                 if let Some(counters) = counters {
                     next_counters.insert(pid, counters);
                     if let Some(samples) = platform::threads(pid, counters.threads) {
@@ -119,13 +119,20 @@ impl Sampler {
         let breakdown = platform::memory_breakdown();
         // Activity Monitor defines "used" as app + wired + compressed; prefer
         // that where we have it so the headline matches what users expect.
-        let used = breakdown
-            .map(|b| b.app + b.wired + b.compressed)
-            .unwrap_or(Bytes(self.system.used_memory()));
+        let (used, available) = match breakdown {
+            Some(b) => {
+                let used = b.app + b.wired + b.compressed;
+                (used, total - used)
+            }
+            None => (
+                Bytes(self.system.used_memory()),
+                Bytes(self.system.available_memory()),
+            ),
+        };
         MemoryStats {
             total,
             used,
-            available: Bytes(self.system.available_memory()),
+            available,
             swap_total: Bytes(self.system.total_swap()),
             swap_used: Bytes(self.system.used_swap()),
             breakdown,
@@ -294,10 +301,19 @@ mod tests {
         let mut alerts = Vec::new();
         for (secs, cpu) in [(0, 1.0), (6, 1.0), (7, 0.1), (12, 1.0), (16, 1.0)] {
             let now = t0 + Duration::from_secs(secs);
-            tracker.observe(Pid(1), &name, &[sample(ThreadRunState::Running, cpu)], now, &mut alerts);
+            tracker.observe(
+                Pid(1),
+                &name,
+                &[sample(ThreadRunState::Running, cpu)],
+                now,
+                &mut alerts,
+            );
             tracker.finish_pass(now);
         }
-        assert!(alerts.is_empty(), "cool-down at 7s must reset the spin timer");
+        assert!(
+            alerts.is_empty(),
+            "cool-down at 7s must reset the spin timer"
+        );
     }
 
     /// Live smoke test: `cargo test sampler_live -- --ignored --nocapture`.
@@ -325,7 +341,13 @@ mod tests {
         let mut tracker = ThreadTracker::default();
         let name: SharedString = "p".into();
         let t0 = Instant::now();
-        tracker.observe(Pid(1), &name, &[sample(ThreadRunState::Waiting, 0.0)], t0, &mut Vec::new());
+        tracker.observe(
+            Pid(1),
+            &name,
+            &[sample(ThreadRunState::Waiting, 0.0)],
+            t0,
+            &mut Vec::new(),
+        );
         tracker.finish_pass(t0);
         tracker.finish_pass(t0 + Duration::from_secs(1));
         assert!(tracker.tracks.is_empty());
