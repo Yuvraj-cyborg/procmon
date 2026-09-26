@@ -5,10 +5,12 @@ use gpui_kit::{
     Window, div,
 };
 
+use crate::cli::LaunchOptions;
 use crate::system::Monitor;
 use crate::ui::activity::ActivityPage;
 use crate::ui::memory::MemoryPage;
 use crate::ui::placeholder::Placeholder;
+use crate::ui::storage::StoragePage;
 
 /// A top-level destination in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -89,13 +91,13 @@ impl PageViews {
 }
 
 impl AppShell {
-    pub fn new(initial: Page, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(options: &LaunchOptions, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let monitor = cx.new(Monitor::new);
         let placeholder = |page: Page, cx: &mut Context<Self>| -> AnyView {
             cx.new(|_| Placeholder::new(page)).into()
         };
         Self {
-            page: initial,
+            page: options.initial_page(),
             views: PageViews {
                 memory: cx
                     .new(|cx| MemoryPage::new(monitor.clone(), window, cx))
@@ -103,7 +105,9 @@ impl AppShell {
                 activity: cx
                     .new(|cx| ActivityPage::new(monitor.clone(), window, cx))
                     .into(),
-                storage: placeholder(Page::Storage, cx),
+                storage: cx
+                    .new(|cx| StoragePage::new(options.scan.clone(), window, cx))
+                    .into(),
                 devices: placeholder(Page::Devices, cx),
             },
             sidebar_collapsed: false,

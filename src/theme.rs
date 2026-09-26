@@ -38,17 +38,6 @@ pub enum Tint {
 }
 
 impl Tint {
-    pub const CYCLE: [Tint; 8] = [
-        Tint::Blue,
-        Tint::Green,
-        Tint::Orange,
-        Tint::Purple,
-        Tint::Pink,
-        Tint::Yellow,
-        Tint::Red,
-        Tint::Brown,
-    ];
-
     /// Pastel fill, readable with the theme foreground on top.
     pub fn fill(self, dark: bool) -> Hsla {
         let hex = match (self, dark) {

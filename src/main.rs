@@ -1,5 +1,6 @@
 mod app;
 mod assets;
+mod cli;
 mod storage;
 mod system;
 mod theme;
@@ -9,26 +10,12 @@ mod units;
 use gpui_kit::component::{Root, TitleBar};
 use gpui_kit::{AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
 
-use crate::app::{AppShell, Page};
+use crate::app::AppShell;
 use crate::assets::AppAssets;
-
-/// Parses `--page <name>`; anything else is ignored.
-fn initial_page() -> Page {
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        if arg == "--page" {
-            match args.next().map(|name| name.parse::<Page>()) {
-                Some(Ok(page)) => return page,
-                Some(Err(err)) => eprintln!("procmon: {err}"),
-                None => eprintln!("procmon: --page needs a value"),
-            }
-        }
-    }
-    Page::Memory
-}
+use crate::cli::LaunchOptions;
 
 fn main() {
-    let page = initial_page();
+    let launch = LaunchOptions::from_args();
     gpui_kit::application()
         .with_assets(AppAssets)
         .run(move |cx| {
@@ -57,7 +44,7 @@ fn main() {
                     if let Err(err) = theme::init(window, cx) {
                         eprintln!("procmon: falling back to default theme: {err:#}");
                     }
-                    let shell = cx.new(|cx| AppShell::new(page, window, cx));
+                    let shell = cx.new(|cx| AppShell::new(&launch, window, cx));
                     cx.new(|cx| Root::new(shell, window, cx))
                 })
                 .expect("failed to open main window");

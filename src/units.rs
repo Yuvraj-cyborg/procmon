@@ -116,7 +116,6 @@ pub struct Ratio(f64);
 
 impl Ratio {
     pub const ZERO: Self = Self(0.0);
-    pub const ONE: Self = Self(1.0);
 
     pub fn new(value: f64) -> Self {
         if value.is_nan() {

@@ -12,6 +12,11 @@ impl NodeId {
     fn index(self) -> usize {
         self.0 as usize
     }
+
+    /// Stable integer for keying UI elements.
+    pub fn as_usize(self) -> usize {
+        self.index()
+    }
 }
 
 /// Broad file type, used for colouring and the legend.
@@ -142,6 +147,7 @@ impl FileTree {
         &self.root_path
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.nodes.len()
     }

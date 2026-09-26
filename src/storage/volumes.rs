@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use sysinfo::{DiskKind, Disks};
 
@@ -28,18 +28,27 @@ impl Volume {
     }
 }
 
-/// Mounted volumes worth showing to a person. On macOS this hides the
-/// APFS helper volumes (Preboot, VM, Update, …) under `/System/Volumes`
-/// except the Data volume, which is where user files actually live.
+const MACOS_DATA_VOLUME: &str = "/System/Volumes/Data";
+
+/// Mounted volumes worth showing to a person.
+///
+/// On macOS the startup disk appears twice: `/` is the sealed, read-only
+/// system snapshot and `/System/Volumes/Data` holds every user file, both in
+/// one APFS container. We keep only the Data volume (scanning `/` would stop
+/// at the system snapshot) and hide the other APFS helper volumes.
 pub fn list_volumes() -> Vec<Volume> {
     let disks = Disks::new_with_refreshed_list();
+    let data_volume = Path::new(MACOS_DATA_VOLUME);
+    let has_data_volume = disks.list().iter().any(|d| d.mount_point() == data_volume);
     let mut volumes: Vec<Volume> = disks
         .list()
         .iter()
         .filter(|disk| {
             let mount = disk.mount_point();
-            !mount.starts_with("/System/Volumes")
-                || mount == std::path::Path::new("/System/Volumes/Data")
+            if mount.starts_with("/System/Volumes") {
+                return mount == data_volume;
+            }
+            !(has_data_volume && mount == Path::new("/"))
         })
         .filter(|disk| disk.total_space() > 0)
         .map(|disk| Volume {
