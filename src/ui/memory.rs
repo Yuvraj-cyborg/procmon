@@ -15,6 +15,7 @@ use crate::system::query::ProcessQuery;
 use crate::system::snapshot::{MemoryPressure, MemoryStats};
 use crate::theme::Tint;
 use crate::ui::app_table::AppTable;
+use crate::ui::process_detail::ProcessDetail;
 use crate::ui::process_table::{ProcessColumn, ProcessTable};
 use crate::ui::widgets::{
     Card, Meter, PageHeader, Segment, Sparkline, Stat, page_body, page_scroll, search_field,
@@ -42,11 +43,17 @@ impl MemoryPage {
         ];
         let table = cx.new(|cx| {
             TableState::new(
-                ProcessTable::new(columns, ProcessColumn::Memory),
+                ProcessTable::new(columns, ProcessColumn::Memory).on_inspect({
+                    let monitor = monitor.clone();
+                    move |pid, name, window, cx| {
+                        ProcessDetail::open(pid, name, monitor.clone(), window, cx)
+                    }
+                }),
                 window,
                 cx,
             )
             .col_movable(false)
+            .row_selectable(false)
         });
         let app_table =
             cx.new(|cx| TableState::new(AppTable::new(), window, cx).col_movable(false));

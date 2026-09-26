@@ -15,10 +15,6 @@ use super::snapshot::{
 };
 use crate::units::{Bytes, Percent, Pid, Rate, ThreadId, Throughput};
 
-/// Extra room in the thread-list buffer for threads spawned between the task
-/// query and the thread listing.
-const THREAD_SLACK: u32 = 16;
-
 /// Collects [`Snapshot`]s. Holds the previous readings needed to turn
 /// cumulative kernel counters into per-second rates.
 pub struct Sampler {
@@ -88,7 +84,9 @@ impl Sampler {
                     .map(|(now, before)| activity_between(before, &now, elapsed));
                 if let Some(counters) = counters {
                     next_counters.insert(pid, counters);
-                    if let Some(samples) = platform::threads(pid, counters.threads + THREAD_SLACK) {
+                    if let Some(samples) =
+                        platform::threads(pid, counters.threads + platform::THREAD_SLACK)
+                    {
                         self.threads
                             .observe(pid, &name, &samples, now, &mut thread_alerts);
                     }

@@ -15,11 +15,12 @@ use crate::actions::{
 };
 use crate::cli::LaunchOptions;
 use crate::settings::{Settings, ThemePreference};
-use crate::system::Monitor;
+use crate::system::{Monitor, executable_path};
 use crate::theme;
 use crate::ui::activity::ActivityPage;
 use crate::ui::devices::DevicesPage;
 use crate::ui::memory::MemoryPage;
+use crate::ui::process_detail::ProcessDetail;
 use crate::ui::storage::StoragePage;
 
 /// A top-level destination in the sidebar.
@@ -121,6 +122,15 @@ impl AppShell {
         // Keyboard shortcuts dispatch along the focus path, so the shell must be
         // on it even before the user clicks anything.
         window.focus(&focus_handle, cx);
+        if let Some(pid) = options.inspect {
+            let monitor = monitor.clone();
+            cx.defer_in(window, move |_, window, cx| {
+                let name = executable_path(pid)
+                    .and_then(|path| Some(path.file_name()?.to_string_lossy().into_owned()))
+                    .unwrap_or_else(|| format!("PID {pid}"));
+                ProcessDetail::open(pid, name.into(), monitor, window, cx);
+            });
+        }
         let appearance = cx.observe_window_appearance(window, |_, window, cx| {
             if Settings::get(cx).theme == ThemePreference::System {
                 Theme::sync_system_appearance(Some(window), cx);
@@ -272,6 +282,7 @@ impl Render for AppShell {
                             .child(self.views.get(self.page)),
                     ),
             )
+            .children(Root::render_sheet_layer(window, cx))
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
     }

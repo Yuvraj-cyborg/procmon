@@ -4,7 +4,7 @@ use std::mem;
 use libproc::libproc::pid_rusage::{RUsageInfoV2, pidrusage};
 use libproc::libproc::task_info::TaskAllInfo;
 use libproc::libproc::thread_info::ThreadInfo;
-use libproc::proc_pid::{ListThreads, listpidinfo, pidinfo};
+use libproc::proc_pid::{ListThreads, listpidinfo, pidinfo, pidpath};
 
 use super::{TaskCounters, ThreadRunState, ThreadSample};
 use crate::system::snapshot::{MemoryBreakdown, MemoryPressure};
@@ -50,6 +50,10 @@ pub fn threads(pid: Pid, hint: u32) -> Option<Vec<ThreadSample>> {
         })
         .collect();
     Some(samples)
+}
+
+pub fn executable_path(pid: Pid) -> Option<std::path::PathBuf> {
+    pidpath(pid.0 as i32).ok().map(Into::into)
 }
 
 fn thread_name(info: &ThreadInfo) -> Option<String> {

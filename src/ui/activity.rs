@@ -5,8 +5,8 @@ use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, Hsla, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, Window, div,
-    prelude::FluentBuilder as _, px, relative,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
+    div, prelude::FluentBuilder as _, px, relative,
 };
 
 use crate::app::Page;
@@ -16,9 +16,10 @@ use crate::system::snapshot::{
     CpuStats, NoiseReason, ProbeCoverage, ProcessInfo, Snapshot, ThreadAlert, ThreadAlertKind,
 };
 use crate::theme::Tint;
+use crate::ui::process_detail::ProcessDetail;
 use crate::ui::process_table::{ProcessColumn, ProcessTable};
 use crate::ui::widgets::{Card, PageHeader, Sparkline, Stat, page_body, page_scroll, search_field};
-use crate::units::{Ratio, compact_duration};
+use crate::units::{Pid, Ratio, compact_duration};
 
 /// At most this many rows in the "Needs attention" card.
 const ATTENTION_LIMIT: usize = 8;
@@ -47,8 +48,18 @@ impl ActivityPage {
             ProcessColumn::Pid,
         ];
         let table = cx.new(|cx| {
-            TableState::new(ProcessTable::new(columns, ProcessColumn::Cpu), window, cx)
-                .col_movable(false)
+            TableState::new(
+                ProcessTable::new(columns, ProcessColumn::Cpu).on_inspect({
+                    let monitor = monitor.clone();
+                    move |pid, name, window, cx| {
+                        ProcessDetail::open(pid, name, monitor.clone(), window, cx)
+                    }
+                }),
+                window,
+                cx,
+            )
+            .col_movable(false)
+            .row_selectable(false)
         });
         let observer = cx.observe(&monitor, |this, monitor, cx| {
             if let Some(snapshot) = monitor.read(cx).latest() {
@@ -148,6 +159,8 @@ impl ActivityPage {
             .iter()
             .map(|alert| thread_alert_row(alert, cx))
             .chain(noisy.iter().map(|(p, reasons)| noisy_row(p, reasons, cx)))
+            .enumerate()
+            .map(|(ix, row)| row.into_element(ix, &self.monitor, cx))
             .take(ATTENTION_LIMIT)
             .collect();
         let issue_count = snapshot.thread_alerts.len() + noisy.len();
@@ -218,49 +231,69 @@ fn coverage_note(coverage: ProbeCoverage) -> SharedString {
     }
 }
 
-fn attention_row(
+/// One line in the "Needs attention" card; clicking it opens the process.
+struct AttentionRow {
+    pid: Pid,
+    process: SharedString,
     icon: Icon,
     accent: Hsla,
-    title: SharedString,
     detail: SharedString,
     tag: Tag,
-    cx: &App,
-) -> AnyElement {
-    let hover_bg = cx.theme().muted;
-    h_flex()
-        .gap_3()
-        .px_2()
-        .py_1p5()
-        .rounded(cx.theme().radius)
-        .hover(move |row| row.bg(hover_bg))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size_7()
-                .rounded_full()
-                .bg(accent.opacity(0.14))
-                .child(icon.small().text_color(accent)),
-        )
-        .child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .child(div().text_sm().truncate().child(title))
-                .child(
-                    div()
-                        .text_xs()
-                        .truncate()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(detail),
-                ),
-        )
-        .child(tag.small().rounded_full())
-        .into_any_element()
 }
 
-fn thread_alert_row(alert: &ThreadAlert, cx: &App) -> AnyElement {
+impl AttentionRow {
+    fn into_element(self, ix: usize, monitor: &Entity<Monitor>, cx: &App) -> AnyElement {
+        let AttentionRow {
+            pid,
+            process,
+            icon,
+            accent,
+            detail,
+            tag,
+        } = self;
+        let title: SharedString = format!("{process} ({pid})").into();
+        let monitor = monitor.clone();
+        let hover_bg = cx.theme().muted;
+        h_flex()
+            .id(("attention", ix))
+            .cursor_pointer()
+            .on_click(move |_, window, cx| {
+                ProcessDetail::open(pid, process.clone(), monitor.clone(), window, cx)
+            })
+            .gap_3()
+            .px_2()
+            .py_1p5()
+            .rounded(cx.theme().radius)
+            .hover(move |row| row.bg(hover_bg))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size_7()
+                    .rounded_full()
+                    .bg(accent.opacity(0.14))
+                    .child(icon.small().text_color(accent)),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_sm().truncate().child(title))
+                    .child(
+                        div()
+                            .text_xs()
+                            .truncate()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(detail),
+                    ),
+            )
+            .child(tag.small().rounded_full())
+            .into_any_element()
+    }
+}
+
+fn thread_alert_row(alert: &ThreadAlert, _: &App) -> AttentionRow {
     let (icon, tint, tag) = match alert.kind {
         ThreadAlertKind::Blocked => (Lucide::Hourglass, Tint::Orange, Tag::warning()),
         ThreadAlertKind::Stopped => (Lucide::Pause, Tint::Gray, Tag::secondary()),
@@ -275,17 +308,17 @@ fn thread_alert_row(alert: &ThreadAlert, cx: &App) -> AnyElement {
         ThreadAlertKind::Stopped => "suspended".to_string(),
         ThreadAlertKind::Spinning { cpu } => format!("at {} of a core", cpu.percent()),
     };
-    attention_row(
-        Icon::new(icon),
-        tint.strong(),
-        format!("{} ({})", alert.process, alert.pid).into(),
-        format!("{thread} {what} for {}", compact_duration(alert.duration)).into(),
-        tag.child(alert.kind.label()),
-        cx,
-    )
+    AttentionRow {
+        pid: alert.pid,
+        process: alert.process.clone(),
+        icon: Icon::new(icon),
+        accent: tint.strong(),
+        detail: format!("{thread} {what} for {}", compact_duration(alert.duration)).into(),
+        tag: tag.child(alert.kind.label()),
+    }
 }
 
-fn noisy_row(process: &ProcessInfo, reasons: &[NoiseReason], cx: &App) -> AnyElement {
+fn noisy_row(process: &ProcessInfo, reasons: &[NoiseReason], _: &App) -> AttentionRow {
     let activity = process.activity.unwrap_or_default();
     let mut detail = format!(
         "{} syscalls · {} switches · {} IPC · {} wakeups",
@@ -295,14 +328,14 @@ fn noisy_row(process: &ProcessInfo, reasons: &[NoiseReason], cx: &App) -> AnyEle
         detail.push_str(&format!(" · {} packets", network.packets));
     }
     let label = reasons.first().map_or("Noisy", |reason| reason.label());
-    attention_row(
-        Icon::new(Lucide::Zap),
-        Tint::Purple.strong(),
-        format!("{} ({})", process.name, process.pid).into(),
-        detail.into(),
-        Tag::info().child(label),
-        cx,
-    )
+    AttentionRow {
+        pid: process.pid,
+        process: process.name.clone(),
+        icon: Icon::new(Lucide::Zap),
+        accent: Tint::Purple.strong(),
+        detail: detail.into(),
+        tag: Tag::info().child(label),
+    }
 }
 
 impl Render for ActivityPage {

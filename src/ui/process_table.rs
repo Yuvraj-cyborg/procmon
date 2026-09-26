@@ -1,17 +1,20 @@
 use std::cmp::Ordering;
+use std::rc::Rc;
 use std::sync::Arc;
 
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
-use gpui_kit::component::{ActiveTheme, h_flex};
+use gpui_kit::component::{ActiveTheme, IconName, h_flex};
 use gpui_kit::{
-    App, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    App, ClickEvent, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::system::network::NetworkRates;
 use crate::system::query::ProcessQuery;
 use crate::system::snapshot::{ProcessInfo, Snapshot};
 use crate::theme::Tint;
+use crate::ui::process_detail;
 use crate::ui::widgets::Meter;
 use crate::units::{Bytes, Pid, Rate, compact_duration};
 
@@ -153,6 +156,9 @@ impl ProcessColumn {
     }
 }
 
+/// Called to open the detail view for a process.
+type InspectHandler = Rc<dyn Fn(Pid, SharedString, &mut Window, &mut App)>;
+
 /// [`TableDelegate`] listing processes from the latest [`Snapshot`].
 pub struct ProcessTable {
     columns: Vec<ProcessColumn>,
@@ -164,6 +170,7 @@ pub struct ProcessTable {
     sort: (ProcessColumn, ColumnSort),
     total_memory: Bytes,
     selected: Option<Pid>,
+    on_inspect: Option<InspectHandler>,
 }
 
 impl ProcessTable {
@@ -176,7 +183,17 @@ impl ProcessTable {
             sort: (sort_by, ColumnSort::Descending),
             total_memory: Bytes::ZERO,
             selected: None,
+            on_inspect: None,
         }
+    }
+
+    /// Double-clicking a row or choosing "Inspect" calls `handler`.
+    pub fn on_inspect(
+        mut self,
+        handler: impl Fn(Pid, SharedString, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_inspect = Some(Rc::new(handler));
+        self
     }
 
     pub fn update(&mut self, snapshot: &Arc<Snapshot>) {
@@ -257,15 +274,53 @@ impl TableDelegate for ProcessTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
-        let pid = self.rows.get(row_ix).map(|p| p.pid);
+        let row = self.rows.get(row_ix).map(|p| (p.pid, p.name.clone()));
+        let pid = row.as_ref().map(|(pid, _)| *pid);
         let selected = pid.is_some() && pid == self.selected;
+        let inspect = self.on_inspect.clone();
         div()
             .id(("process-row", row_ix))
             .when(selected, |row| row.bg(cx.theme().table_active))
-            .on_click(cx.listener(move |table, _, _, cx| {
+            .on_click(cx.listener(move |table, event: &ClickEvent, window, cx| {
                 table.delegate_mut().selected = pid;
+                if event.click_count() >= 2
+                    && let (Some((pid, name)), Some(inspect)) = (&row, &inspect)
+                {
+                    inspect(*pid, name.clone(), window, cx);
+                }
                 cx.notify();
             }))
+    }
+
+    fn context_menu(
+        &mut self,
+        row_ix: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let Some(process) = self.rows.get(row_ix) else {
+            return menu;
+        };
+        let (pid, name) = (process.pid, process.name.clone());
+        let (quit_name, kill_name) = (name.clone(), name.clone());
+        menu.when_some(self.on_inspect.clone(), |menu, inspect| {
+            menu.item(
+                PopupMenuItem::new("Inspect")
+                    .icon(IconName::Info)
+                    .on_click(move |_, window, cx| inspect(pid, name.clone(), window, cx)),
+            )
+            .separator()
+        })
+        .item(
+            PopupMenuItem::new("Quit")
+                .on_click(move |_, window, cx| process_detail::quit(pid, &quit_name, window, cx)),
+        )
+        .item(
+            PopupMenuItem::new("Force Quit…").on_click(move |_, window, cx| {
+                process_detail::confirm_force_quit(pid, kill_name.clone(), window, cx)
+            }),
+        )
     }
 
     fn render_td(

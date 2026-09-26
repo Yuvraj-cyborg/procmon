@@ -24,14 +24,31 @@ pub struct TaskCounters {
     pub footprint: Option<Bytes>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Extra room in thread-list buffers for threads spawned between asking how
+/// many threads a task has and listing them.
+pub const THREAD_SLACK: u32 = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ThreadRunState {
-    Running,
-    Stopped,
-    Waiting,
     Uninterruptible,
+    Stopped,
+    Running,
+    Waiting,
     Halted,
     Unknown,
+}
+
+impl ThreadRunState {
+    pub fn label(self) -> &'static str {
+        match self {
+            ThreadRunState::Running => "Running",
+            ThreadRunState::Waiting => "Waiting",
+            ThreadRunState::Uninterruptible => "Blocked",
+            ThreadRunState::Stopped => "Stopped",
+            ThreadRunState::Halted => "Halted",
+            ThreadRunState::Unknown => "Unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
