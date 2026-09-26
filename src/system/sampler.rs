@@ -7,7 +7,7 @@ use sysinfo::{
     UpdateKind,
 };
 
-use super::network::NetworkProbe;
+use super::network::{NetworkProbe, NetworkRates};
 use super::platform::{self, TaskCounters, ThreadRunState, ThreadSample};
 use super::snapshot::{
     ActivityRates, CpuStats, LoadAverage, MemoryStats, ProbeCoverage, ProcessInfo, Snapshot,
@@ -17,12 +17,22 @@ use crate::units::{Bytes, Percent, Pid, Rate, ThreadId, Throughput};
 
 /// Collects [`Snapshot`]s. Holds the previous readings needed to turn
 /// cumulative kernel counters into per-second rates.
+/// Walking every thread of every process costs thousands of syscalls, so
+/// thread states are probed on every other sample.
+const THREAD_PROBE_EVERY: u64 = 2;
+/// Network totals come from spawning `nettop`; every third sample is plenty
+/// because rates are computed over the real elapsed time.
+const NETWORK_PROBE_EVERY: u64 = 3;
+
 pub struct Sampler {
     system: System,
     last_sample: Instant,
+    passes: u64,
     counters: HashMap<Pid, TaskCounters>,
     threads: ThreadTracker,
+    thread_alerts: Vec<ThreadAlert>,
     network: NetworkProbe,
+    network_rates: HashMap<Pid, NetworkRates>,
 }
 
 impl Sampler {
@@ -38,7 +48,10 @@ impl Sampler {
             last_sample: Instant::now(),
             counters: HashMap::new(),
             threads: ThreadTracker::default(),
+            passes: 0,
+            thread_alerts: Vec::new(),
             network: NetworkProbe::default(),
+            network_rates: HashMap::new(),
         }
     }
 
@@ -63,7 +76,12 @@ impl Sampler {
             Self::process_refresh_kind(),
         );
 
-        let network = self.network.sample(now);
+        let probe_threads = self.passes % THREAD_PROBE_EVERY == 0;
+        if self.passes % NETWORK_PROBE_EVERY == 0 {
+            self.network_rates = self.network.sample(now);
+        }
+        self.passes += 1;
+
         let mut coverage = ProbeCoverage::default();
         let mut thread_alerts = Vec::new();
         let mut next_counters = HashMap::with_capacity(self.system.processes().len());
@@ -84,8 +102,9 @@ impl Sampler {
                     .map(|(now, before)| activity_between(before, &now, elapsed));
                 if let Some(counters) = counters {
                     next_counters.insert(pid, counters);
-                    if let Some(samples) =
-                        platform::threads(pid, counters.threads + platform::THREAD_SLACK)
+                    if probe_threads
+                        && let Some(samples) =
+                            platform::threads(pid, counters.threads + platform::THREAD_SLACK)
                     {
                         self.threads
                             .observe(pid, &name, &samples, now, &mut thread_alerts);
@@ -103,21 +122,24 @@ impl Sampler {
                     disk_write: throughput(disk.written_bytes, elapsed),
                     run_time: Duration::from_secs(process.run_time()),
                     activity,
-                    network: network.get(&pid).copied(),
+                    network: self.network_rates.get(&pid).copied(),
                     app: app_name(process.exe(), &name),
                     name,
                 }
             })
             .collect();
         self.counters = next_counters;
-        self.threads.finish_pass(now);
-        thread_alerts.sort_by(|a, b| b.duration.cmp(&a.duration));
+        if probe_threads {
+            self.threads.finish_pass(now);
+            thread_alerts.sort_by(|a, b| b.duration.cmp(&a.duration));
+            self.thread_alerts = thread_alerts;
+        }
 
         Snapshot {
             memory: self.memory_stats(),
             cpu: self.cpu_stats(),
             processes,
-            thread_alerts,
+            thread_alerts: self.thread_alerts.clone(),
             coverage,
         }
     }
