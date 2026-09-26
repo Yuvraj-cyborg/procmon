@@ -96,6 +96,16 @@ impl StoragePage {
         cx.notify();
     }
 
+    /// Scans the last root again, if there is one.
+    pub fn rescan(&mut self, cx: &mut Context<Self>) {
+        let root = match &self.state {
+            ScanState::Ready(browse) => browse.tree.root_path().to_path_buf(),
+            ScanState::Failed { root, .. } => root.clone(),
+            ScanState::Idle | ScanState::Scanning { .. } => return,
+        };
+        self.start_scan(root, cx);
+    }
+
     fn cancel_scan(&mut self) {
         if let ScanState::Scanning { progress, .. } = &self.state {
             progress.cancel();

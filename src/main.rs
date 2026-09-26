@@ -1,3 +1,4 @@
+mod actions;
 mod app;
 mod assets;
 mod cli;
@@ -21,6 +22,7 @@ fn main() {
         .with_assets(AppAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            actions::init(cx);
 
             let preferred = size(px(1180.), px(800.));
             let window_size = cx

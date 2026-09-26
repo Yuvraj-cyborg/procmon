@@ -46,7 +46,7 @@ impl DevicesPage {
         }
     }
 
-    fn refresh(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.loading {
             return;
         }
