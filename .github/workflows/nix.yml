@@ -20,7 +20,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: cachix/install-nix-action@v31
 
@@ -28,4 +28,4 @@ jobs:
         run: nix build --print-build-logs
 
       - name: Inspect result
-        run: find -L result -maxdepth 4 -type f | head -20 && du -shL result
+        run: find result/ -type f -o -type l | xargs ls -lL

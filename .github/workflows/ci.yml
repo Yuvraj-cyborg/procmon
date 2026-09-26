@@ -17,7 +17,7 @@ jobs:
       matrix:
         os: [macos-15, ubuntu-22.04]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
