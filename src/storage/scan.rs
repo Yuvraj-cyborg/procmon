@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
@@ -180,7 +181,7 @@ fn scan_dir(path: &Path, name: Box<str>, own_size: u64, cx: &Context<'_>) -> Sca
         .map(|(path, name, size)| scan_dir(&path, name, size, cx))
         .collect();
 
-    files.sort_unstable_by(|a, b| b.size.cmp(&a.size));
+    files.sort_unstable_by_key(|f| Reverse(f.size));
     let keep = FILES_PER_FOLDER.max(files.partition_point(|f| f.size >= ALWAYS_KEEP));
     if files.len() > keep {
         let tail = files.split_off(keep);
@@ -196,7 +197,7 @@ fn scan_dir(path: &Path, name: Box<str>, own_size: u64, cx: &Context<'_>) -> Sca
 
     node.children = dirs;
     node.children.append(&mut files);
-    node.children.sort_unstable_by(|a, b| b.size.cmp(&a.size));
+    node.children.sort_unstable_by_key(|c| Reverse(c.size));
     node.size += node.children.iter().map(|c| c.size).sum::<u64>();
     node.files = node.children.iter().map(|c| c.files).sum();
     node

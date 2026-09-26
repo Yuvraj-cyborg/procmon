@@ -206,7 +206,7 @@ impl FileTree {
             cursor = node.parent;
             if let Some(grandparent) = cursor {
                 let mut siblings = std::mem::take(&mut self.node_mut(grandparent).children);
-                siblings.sort_by(|a, b| self.node(*b).size.cmp(&self.node(*a).size));
+                siblings.sort_by_key(|id| std::cmp::Reverse(self.node(*id).size));
                 self.node_mut(grandparent).children = siblings;
             }
         }

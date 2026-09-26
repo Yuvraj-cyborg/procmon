@@ -76,8 +76,8 @@ impl Sampler {
             Self::process_refresh_kind(),
         );
 
-        let probe_threads = self.passes % THREAD_PROBE_EVERY == 0;
-        if self.passes % NETWORK_PROBE_EVERY == 0 {
+        let probe_threads = self.passes.is_multiple_of(THREAD_PROBE_EVERY);
+        if self.passes.is_multiple_of(NETWORK_PROBE_EVERY) {
             self.network_rates = self.network.sample(now);
         }
         self.passes += 1;
@@ -131,7 +131,7 @@ impl Sampler {
         self.counters = next_counters;
         if probe_threads {
             self.threads.finish_pass(now);
-            thread_alerts.sort_by(|a, b| b.duration.cmp(&a.duration));
+            thread_alerts.sort_by_key(|alert| std::cmp::Reverse(alert.duration));
             self.thread_alerts = thread_alerts;
         }
 

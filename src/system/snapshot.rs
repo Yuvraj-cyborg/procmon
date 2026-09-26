@@ -155,7 +155,7 @@ pub fn group_by_app(processes: &[ProcessInfo]) -> Vec<AppUsage> {
         group.threads += process.threads.unwrap_or(0);
     }
     let mut apps: Vec<AppUsage> = groups.into_values().collect();
-    apps.sort_by(|a, b| b.memory.cmp(&a.memory));
+    apps.sort_by_key(|app| std::cmp::Reverse(app.memory));
     apps
 }
 
