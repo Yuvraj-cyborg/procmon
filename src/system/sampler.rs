@@ -6,6 +6,7 @@ use sysinfo::{
     CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
 };
 
+use super::network::NetworkProbe;
 use super::platform::{self, TaskCounters, ThreadRunState, ThreadSample};
 use super::snapshot::{
     ActivityRates, CpuStats, LoadAverage, MemoryStats, ProbeCoverage, ProcessInfo, Snapshot,
@@ -24,6 +25,7 @@ pub struct Sampler {
     last_sample: Instant,
     counters: HashMap<Pid, TaskCounters>,
     threads: ThreadTracker,
+    network: NetworkProbe,
 }
 
 impl Sampler {
@@ -39,6 +41,7 @@ impl Sampler {
             last_sample: Instant::now(),
             counters: HashMap::new(),
             threads: ThreadTracker::default(),
+            network: NetworkProbe::default(),
         }
     }
 
@@ -62,6 +65,7 @@ impl Sampler {
             Self::process_refresh_kind(),
         );
 
+        let network = self.network.sample(now);
         let mut coverage = ProbeCoverage::default();
         let mut thread_alerts = Vec::new();
         let mut next_counters = HashMap::with_capacity(self.system.processes().len());
@@ -90,7 +94,6 @@ impl Sampler {
                 let disk = process.disk_usage();
                 ProcessInfo {
                     pid,
-                    parent: process.parent().map(|p| Pid(p.as_u32())),
                     memory: counters
                         .and_then(|c| c.footprint)
                         .unwrap_or(Bytes(process.memory())),
@@ -100,6 +103,7 @@ impl Sampler {
                     disk_write: throughput(disk.written_bytes, elapsed),
                     run_time: Duration::from_secs(process.run_time()),
                     activity,
+                    network: network.get(&pid).copied(),
                     name,
                 }
             })
@@ -109,7 +113,6 @@ impl Sampler {
         thread_alerts.sort_by(|a, b| b.duration.cmp(&a.duration));
 
         Snapshot {
-            taken_at: now,
             memory: self.memory_stats(),
             cpu: self.cpu_stats(),
             processes,

@@ -7,6 +7,7 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 
+use crate::system::network::NetworkRates;
 use crate::system::snapshot::{ProcessInfo, Snapshot};
 use crate::theme::Tint;
 use crate::ui::widgets::Meter;
@@ -27,6 +28,9 @@ pub enum ProcessColumn {
     Syscalls,
     ContextSwitches,
     Wakeups,
+    NetIn,
+    NetOut,
+    Packets,
     Uptime,
 }
 
@@ -44,6 +48,9 @@ impl ProcessColumn {
             Self::Syscalls => "syscalls",
             Self::ContextSwitches => "csw",
             Self::Wakeups => "wakeups",
+            Self::NetIn => "net_in",
+            Self::NetOut => "net_out",
+            Self::Packets => "packets",
             Self::Uptime => "uptime",
         }
     }
@@ -61,6 +68,9 @@ impl ProcessColumn {
             Self::Syscalls => "Syscalls",
             Self::ContextSwitches => "Ctx switches",
             Self::Wakeups => "Wakeups",
+            Self::NetIn => "Received",
+            Self::NetOut => "Sent",
+            Self::Packets => "Packets",
             Self::Uptime => "Running for",
         }
     }
@@ -82,6 +92,9 @@ impl ProcessColumn {
         fn rate(p: &ProcessInfo, f: fn(&crate::system::snapshot::ActivityRates) -> Rate) -> f64 {
             p.activity.as_ref().map_or(-1.0, |a| f(a).per_sec())
         }
+        fn net(p: &ProcessInfo, f: fn(&NetworkRates) -> f64) -> f64 {
+            p.network.as_ref().map_or(-1.0, f)
+        }
         match self {
             Self::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             Self::Pid => a.pid.cmp(&b.pid),
@@ -95,6 +108,14 @@ impl ProcessColumn {
                 rate(a, |r| r.context_switches).total_cmp(&rate(b, |r| r.context_switches))
             }
             Self::Wakeups => rate(a, |r| r.idle_wakeups).total_cmp(&rate(b, |r| r.idle_wakeups)),
+            Self::NetIn => net(a, |n| n.received.0.get() as f64)
+                .total_cmp(&net(b, |n| n.received.0.get() as f64)),
+            Self::NetOut => {
+                net(a, |n| n.sent.0.get() as f64).total_cmp(&net(b, |n| n.sent.0.get() as f64))
+            }
+            Self::Packets => {
+                net(a, |n| n.packets.per_sec()).total_cmp(&net(b, |n| n.packets.per_sec()))
+            }
             Self::Uptime => a.run_time.cmp(&b.run_time),
         }
     }
@@ -117,6 +138,13 @@ impl ProcessColumn {
             Self::Syscalls => rate(|r| r.syscalls),
             Self::ContextSwitches => rate(|r| r.context_switches),
             Self::Wakeups => rate(|r| r.idle_wakeups),
+            Self::NetIn => p
+                .network
+                .map_or_else(|| "—".into(), |n| n.received.to_string()),
+            Self::NetOut => p.network.map_or_else(|| "—".into(), |n| n.sent.to_string()),
+            Self::Packets => p
+                .network
+                .map_or_else(|| "—".into(), |n| n.packets.to_string()),
             Self::Uptime => compact_duration(p.run_time),
         }
         .into()

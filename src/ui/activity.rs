@@ -35,6 +35,9 @@ impl ActivityPage {
             ProcessColumn::Syscalls,
             ProcessColumn::ContextSwitches,
             ProcessColumn::Wakeups,
+            ProcessColumn::NetIn,
+            ProcessColumn::NetOut,
+            ProcessColumn::Packets,
             ProcessColumn::DiskRead,
             ProcessColumn::DiskWrite,
             ProcessColumn::Threads,
@@ -111,14 +114,11 @@ impl ActivityPage {
             .processes
             .iter()
             .filter_map(|p| {
-                let reasons = p.activity.as_ref()?.noise_reasons();
+                let reasons = p.noise_reasons();
                 (!reasons.is_empty()).then_some((p, reasons))
             })
             .collect();
-        noisy.sort_by(|(a, _), (b, _)| {
-            let intensity = |p: &ProcessInfo| p.activity.map_or(0.0, |a| a.intensity());
-            intensity(b).total_cmp(&intensity(a))
-        });
+        noisy.sort_by(|(a, _), (b, _)| b.intensity().total_cmp(&a.intensity()));
 
         let rows: Vec<AnyElement> = snapshot
             .thread_alerts
@@ -264,10 +264,13 @@ fn thread_alert_row(alert: &ThreadAlert, cx: &App) -> AnyElement {
 
 fn noisy_row(process: &ProcessInfo, reasons: &[NoiseReason], cx: &App) -> AnyElement {
     let activity = process.activity.unwrap_or_default();
-    let detail = format!(
+    let mut detail = format!(
         "{} syscalls · {} switches · {} IPC · {} wakeups",
         activity.syscalls, activity.context_switches, activity.mach_messages, activity.idle_wakeups
     );
+    if let Some(network) = process.network {
+        detail.push_str(&format!(" · {} packets", network.packets));
+    }
     let label = reasons.first().map_or("Noisy", |reason| reason.label());
     attention_row(
         Icon::new(Lucide::Zap),

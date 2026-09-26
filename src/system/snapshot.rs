@@ -1,15 +1,15 @@
 //! Immutable, UI-agnostic readings produced by the [`Sampler`](super::Sampler).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::SharedString;
 
+use super::network::NetworkRates;
 use crate::units::{Bytes, Percent, Pid, Rate, Ratio, ThreadId, Throughput};
 
 /// Everything measured in one sampling pass.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
-    pub taken_at: Instant,
     pub memory: MemoryStats,
     pub cpu: CpuStats,
     pub processes: Vec<ProcessInfo>,
@@ -80,7 +80,6 @@ pub struct LoadAverage {
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: Pid,
-    pub parent: Option<Pid>,
     pub name: SharedString,
     /// Physical footprint where available (what Activity Monitor calls "Memory"),
     /// otherwise resident set size.
@@ -93,6 +92,36 @@ pub struct ProcessInfo {
     pub run_time: Duration,
     /// Kernel counters; `None` when we lack permission to inspect the task.
     pub activity: Option<ActivityRates>,
+    /// `None` when the process had no sockets in the last interval.
+    pub network: Option<NetworkRates>,
+}
+
+impl ProcessInfo {
+    /// Packets per second above which a process is flagged as flooding the network.
+    const PACKETS: f64 = 5_000.0;
+
+    pub fn noise_reasons(&self) -> Vec<NoiseReason> {
+        let mut reasons = self
+            .activity
+            .as_ref()
+            .map(ActivityRates::noise_reasons)
+            .unwrap_or_default();
+        if self
+            .network
+            .is_some_and(|n| n.packets.per_sec() >= Self::PACKETS)
+        {
+            reasons.push(NoiseReason::Packets);
+        }
+        reasons
+    }
+
+    /// Ranks processes by how hard they are hammering the kernel and network.
+    pub fn intensity(&self) -> f64 {
+        self.activity.map_or(0.0, |a| a.intensity())
+            + self
+                .network
+                .map_or(0.0, |n| n.packets.per_sec() / Self::PACKETS)
+    }
 }
 
 /// How chatty a process is with the kernel, per second.
@@ -113,6 +142,7 @@ pub enum NoiseReason {
     MachMessages,
     Wakeups,
     PageFaults,
+    Packets,
 }
 
 impl NoiseReason {
@@ -123,6 +153,7 @@ impl NoiseReason {
             NoiseReason::MachMessages => "IPC flood",
             NoiseReason::Wakeups => "frequent wakeups",
             NoiseReason::PageFaults => "page-fault storm",
+            NoiseReason::Packets => "packet flood",
         }
     }
 }
