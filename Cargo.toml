@@ -17,3 +17,4 @@ libc = "0.2.189"
 [target.'cfg(target_os = "macos")'.dependencies]
 libproc = "0.14.11"
 mach2 = "0.7.0"
+objc2-foundation = "0.3"

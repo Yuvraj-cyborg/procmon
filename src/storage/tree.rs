@@ -164,6 +164,54 @@ impl FileTree {
         chain
     }
 
+    /// The `limit` largest individual files in the whole tree, largest first.
+    pub fn largest_files(&self, limit: usize) -> Vec<NodeId> {
+        // Walk from the root rather than over the arena: removed nodes stay in
+        // the arena but are no longer reachable.
+        let mut files = Vec::new();
+        let mut stack = vec![NodeId::ROOT];
+        while let Some(id) = stack.pop() {
+            let node = self.node(id);
+            if node.children.is_empty() {
+                if !matches!(node.category, Category::Folder | Category::Remainder) {
+                    files.push(id);
+                }
+            } else {
+                stack.extend_from_slice(&node.children);
+            }
+        }
+        let by_size = |a: &NodeId, b: &NodeId| self.node(*b).size.cmp(&self.node(*a).size);
+        if files.len() > limit {
+            files.select_nth_unstable_by(limit, by_size);
+            files.truncate(limit);
+        }
+        files.sort_unstable_by(by_size);
+        files
+    }
+
+    /// Unlinks `id` after it was deleted on disk, subtracting its size and
+    /// file count from every ancestor and keeping siblings sorted by size.
+    pub fn remove(&mut self, id: NodeId) {
+        let Some(parent) = self.node(id).parent else {
+            return;
+        };
+        let (size, files) = (self.node(id).size, self.node(id).files);
+        self.node_mut(parent).children.retain(|child| *child != id);
+
+        let mut cursor = Some(parent);
+        while let Some(ancestor) = cursor {
+            let node = self.node_mut(ancestor);
+            node.size = node.size - size;
+            node.files = node.files.saturating_sub(files);
+            cursor = node.parent;
+            if let Some(grandparent) = cursor {
+                let mut siblings = std::mem::take(&mut self.node_mut(grandparent).children);
+                siblings.sort_by(|a, b| self.node(*b).size.cmp(&self.node(*a).size));
+                self.node_mut(grandparent).children = siblings;
+            }
+        }
+    }
+
     /// Filesystem path of a node, or `None` for synthetic nodes.
     pub fn path_of(&self, id: NodeId) -> Option<PathBuf> {
         let lineage = self.lineage(id);
@@ -184,6 +232,61 @@ impl FileTree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn node(name: &str, size: u64, category: Category, parent: Option<NodeId>) -> Node {
+        Node {
+            name: name.into(),
+            size: Bytes(size),
+            category,
+            files: u64::from(category != Category::Folder),
+            parent,
+            children: Vec::new(),
+        }
+    }
+
+    /// root (1000) ─ a/ (900) ─ big.mov (600), small.txt (300)
+    ///             └ c.zip (100)
+    fn sample() -> (FileTree, [NodeId; 4]) {
+        let mut tree = FileTree::with_root(
+            PathBuf::from("/r"),
+            Node {
+                files: 3,
+                ..node("r", 1000, Category::Folder, None)
+            },
+        );
+        let a = tree.push(Node {
+            files: 2,
+            ..node("a", 900, Category::Folder, Some(NodeId::ROOT))
+        });
+        let c = tree.push(node("c.zip", 100, Category::Archive, Some(NodeId::ROOT)));
+        let big = tree.push(node("big.mov", 600, Category::Video, Some(a)));
+        let small = tree.push(node("small.txt", 300, Category::Document, Some(a)));
+        tree.node_mut(NodeId::ROOT).children = vec![a, c];
+        tree.node_mut(a).children = vec![big, small];
+        (tree, [a, c, big, small])
+    }
+
+    #[test]
+    fn largest_files_skips_folders() {
+        let (tree, [_, c, big, small]) = sample();
+        assert_eq!(tree.largest_files(10), vec![big, small, c]);
+        assert_eq!(tree.largest_files(1), vec![big]);
+    }
+
+    #[test]
+    fn remove_updates_ancestors_and_resorts() {
+        let (mut tree, [a, c, big, _]) = sample();
+        tree.remove(big);
+        assert_eq!(tree.node(a).size, Bytes(300));
+        assert_eq!(tree.node(a).files, 1);
+        assert_eq!(tree.node(NodeId::ROOT).size, Bytes(400));
+        assert_eq!(tree.node(NodeId::ROOT).files, 2);
+        assert!(!tree.largest_files(10).contains(&big));
+
+        tree.remove(a);
+        assert_eq!(tree.node(NodeId::ROOT).children, vec![c]);
+        assert_eq!(tree.node(NodeId::ROOT).size, Bytes(100));
+    }
 
     #[test]
     fn classifies_common_types() {

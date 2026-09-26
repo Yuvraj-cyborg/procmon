@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, canvas, div, prelude::FluentBuilder as _, px, size,
 };
 
-use super::{StoragePage, category_tint};
+use super::{ScanState, StoragePage, category_tint};
 use crate::storage::treemap::{Rect, squarify};
 use crate::storage::{FileTree, NodeId};
 
@@ -29,6 +30,7 @@ impl StoragePage {
         &self,
         tree: &Arc<FileTree>,
         current: NodeId,
+        selected: Option<NodeId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let area = self
@@ -63,16 +65,44 @@ impl StoragePage {
         .absolute()
         .size_full();
 
+        let menu_view = cx.entity().downgrade();
         div()
+            .id("treemap")
             .relative()
             .size_full()
+            .context_menu(move |menu, _, cx| {
+                let Some(view) = menu_view.upgrade() else {
+                    return menu;
+                };
+                let Some((id, is_folder, path)) = view.read(cx).hovered_target() else {
+                    return menu;
+                };
+                let (open_view, trash_view) = (view.clone(), view);
+                menu.when(is_folder, |menu| {
+                    menu.item(PopupMenuItem::new("Open").on_click(move |_, _, cx| {
+                        open_view.update(cx, |this, cx| this.focus_node(id, cx));
+                    }))
+                })
+                .when_some(path, |menu, path| {
+                    menu.item(
+                        PopupMenuItem::new("Reveal in Finder")
+                            .on_click(move |_, _, cx| cx.reveal_path(&path)),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new("Move to Trash…").on_click(move |_, window, cx| {
+                            trash_view.update(cx, |this, cx| this.confirm_trash(id, window, cx));
+                        }),
+                    )
+                })
+            })
             .child(measure)
             .children(
                 children
                     .into_iter()
                     .zip(rects)
                     .filter(|(_, r)| r.w >= 1.0 && r.h >= 1.0)
-                    .map(|(id, rect)| self.render_tile(tree, id, rect, cx)),
+                    .map(|(id, rect)| self.render_tile(tree, id, rect, selected, cx)),
             )
             .into_any_element()
     }
@@ -82,10 +112,12 @@ impl StoragePage {
         tree: &Arc<FileTree>,
         id: NodeId,
         rect: Rect,
+        selected: Option<NodeId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
         let dark = theme.is_dark();
+        let ring = theme.ring;
         let node = tree.node(id);
         let r = rect.inset(GAP / 2.0);
         let nested = node.is_container() && r.w >= NEST_MIN_W && r.h >= NEST_MIN_H;
@@ -113,7 +145,10 @@ impl StoragePage {
                 .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                     this.hover(hovered.then_some(id), cx)
                 }))
-                .on_click(cx.listener(move |this, _, _, cx| this.navigate(id, cx)));
+                .when(selected == Some(id), |tile| {
+                    tile.border_2().border_color(ring)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| this.focus_node(id, cx)));
 
         if nested {
             let inner = Rect::new(GAP, HEADER, r.w - 2.0 * GAP, r.h - HEADER - GAP);
@@ -129,7 +164,7 @@ impl StoragePage {
                     .into_iter()
                     .zip(rects)
                     .filter(|(_, r)| r.w >= 1.0 && r.h >= 1.0)
-                    .map(|(child, rect)| self.render_subtile(tree, id, child, rect, cx)),
+                    .map(|(child, rect)| self.render_subtile(tree, child, rect, selected, cx)),
             )
             .into_any_element()
         } else {
@@ -144,20 +179,20 @@ impl StoragePage {
         }
     }
 
-    /// A tile inside a nested folder. Clicking opens the child if it is a
-    /// folder, otherwise the folder that contains it.
+    /// A tile inside a nested folder. Clicking opens the child folder, or
+    /// opens the containing folder with the file selected.
     fn render_subtile(
         &self,
         tree: &Arc<FileTree>,
-        parent: NodeId,
         id: NodeId,
         rect: Rect,
+        selected: Option<NodeId>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
+        let ring = theme.ring;
         let node = tree.node(id);
         let r = rect.inset(GAP / 2.0);
-        let target = if node.is_container() { id } else { parent };
         div()
             .id(("subtile", id.as_usize()))
             .absolute()
@@ -174,9 +209,12 @@ impl StoragePage {
                     this.hover(hovered.then_some(id), cx)
                 }),
             )
+            .when(selected == Some(id), |tile| {
+                tile.border_2().border_color(ring)
+            })
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                this.navigate(target, cx)
+                this.focus_node(id, cx)
             }))
             .when(r.w >= LABEL_MIN_W && r.h >= LABEL_MIN_H, |tile| {
                 tile.p_1().child(
@@ -186,6 +224,21 @@ impl StoragePage {
                 )
             })
             .into_any_element()
+    }
+}
+
+impl StoragePage {
+    /// The tile under the pointer, for the right-click menu: its id, whether
+    /// it is a folder, and its path (none for the root or synthetic nodes).
+    fn hovered_target(&self) -> Option<(NodeId, bool, Option<std::path::PathBuf>)> {
+        let ScanState::Ready(browse) = &self.state else {
+            return None;
+        };
+        let id = browse.hovered?;
+        let path = (id != NodeId::ROOT)
+            .then(|| browse.tree.path_of(id))
+            .flatten();
+        Some((id, browse.tree.node(id).is_container(), path))
     }
 }
 

@@ -15,6 +15,10 @@ use crate::units::Bytes;
 /// are folded into one "smaller files" node so huge trees stay light in memory.
 const FILES_PER_FOLDER: usize = 64;
 
+/// Files at least this large are never folded, so they always show up in the
+/// map and the largest-files list.
+const ALWAYS_KEEP: u64 = 16 * 1024 * 1024;
+
 /// `st_blocks` is always counted in 512-byte units, regardless of the
 /// filesystem's block size.
 const BLOCK_SIZE: u64 = 512;
@@ -177,8 +181,9 @@ fn scan_dir(path: &Path, name: Box<str>, own_size: u64, cx: &Context<'_>) -> Sca
         .collect();
 
     files.sort_unstable_by(|a, b| b.size.cmp(&a.size));
-    if files.len() > FILES_PER_FOLDER {
-        let tail = files.split_off(FILES_PER_FOLDER);
+    let keep = FILES_PER_FOLDER.max(files.partition_point(|f| f.size >= ALWAYS_KEEP));
+    if files.len() > keep {
+        let tail = files.split_off(keep);
         let count = tail.len() as u64;
         files.push(Scanned {
             name: format!("{count} smaller files").into(),

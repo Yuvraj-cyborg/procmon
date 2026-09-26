@@ -1,3 +1,5 @@
+mod browse;
+mod largest;
 mod treemap;
 
 use std::cell::Cell;
@@ -9,7 +11,7 @@ use std::time::Duration;
 use gpui_kit::component::breadcrumb::{Breadcrumb, BreadcrumbItem};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Selectable as _, Sizable, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, AppContext as _, Bounds, Context, IntoElement, ParentElement, PathPromptOptions,
     Pixels, Render, SharedString, Styled, Task, Window, div, prelude::FluentBuilder as _, px,
@@ -19,6 +21,7 @@ use crate::app::Page;
 use crate::storage::{self, Category, FileTree, NodeId, ScanError, ScanProgress, Volume};
 use crate::theme::Tint;
 use crate::ui::widgets::{Card, Meter, PageHeader, page_body, page_scroll};
+use browse::{Browse, BrowseMode};
 
 pub struct StoragePage {
     volumes: Vec<Volume>,
@@ -40,13 +43,6 @@ enum ScanState {
         root: PathBuf,
         message: SharedString,
     },
-}
-
-/// Navigation state over a finished scan.
-struct Browse {
-    tree: Arc<FileTree>,
-    current: NodeId,
-    hovered: Option<NodeId>,
 }
 
 impl StoragePage {
@@ -119,11 +115,7 @@ impl StoragePage {
         cx: &mut Context<Self>,
     ) {
         self.state = match result {
-            Ok(tree) => ScanState::Ready(Browse {
-                tree: Arc::new(tree),
-                current: NodeId::ROOT,
-                hovered: None,
-            }),
+            Ok(tree) => ScanState::Ready(Browse::new(tree)),
             Err(ScanError::Cancelled) => ScanState::Idle,
             Err(err) => ScanState::Failed {
                 root,
@@ -149,25 +141,6 @@ impl StoragePage {
             }
         })
         .detach();
-    }
-
-    pub(super) fn navigate(&mut self, node: NodeId, cx: &mut Context<Self>) {
-        if let ScanState::Ready(browse) = &mut self.state
-            && browse.tree.node(node).is_container()
-        {
-            browse.current = node;
-            browse.hovered = None;
-            cx.notify();
-        }
-    }
-
-    pub(super) fn hover(&mut self, node: Option<NodeId>, cx: &mut Context<Self>) {
-        if let ScanState::Ready(browse) = &mut self.state
-            && browse.hovered != node
-        {
-            browse.hovered = node;
-            cx.notify();
-        }
     }
 
     fn render_volumes(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -291,12 +264,38 @@ impl StoragePage {
         let ScanState::Ready(browse) = &self.state else {
             unreachable!("render_browser called without a finished scan");
         };
-        let tree = browse.tree.clone();
-        let current = browse.current;
-        let hovered = browse.hovered;
         let muted = cx.theme().muted_foreground;
-        let node = tree.node(current);
+        let tree = browse.tree.clone();
+        let unreadable = tree.unreadable;
+        let header = self.render_browser_header(browse, cx);
+        let body = match browse.mode {
+            BrowseMode::Map => div()
+                .flex_1()
+                .min_h(px(280.))
+                .child(self.render_treemap(&tree, browse.current, browse.selected, cx))
+                .into_any_element(),
+            BrowseMode::LargestFiles => self.render_largest(browse, cx),
+        };
+        let footer = self.render_browser_footer(browse, cx);
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .gap_3()
+            .child(header)
+            .child(body)
+            .child(footer)
+            .when(unreadable > 0, |col| {
+                col.child(div().text_xs().text_color(muted).child(format!(
+                    "{unreadable} folders were skipped because macOS privacy settings block them. \
+                     Grant Procmon Full Disk Access to include them."
+                )))
+            })
+            .into_any_element()
+    }
 
+    fn render_browser_header(&self, browse: &Browse, cx: &mut Context<Self>) -> AnyElement {
+        let tree = &browse.tree;
+        let current = browse.current;
         let crumbs = tree.lineage(current).into_iter().map(|id| {
             let label: SharedString = if id == NodeId::ROOT {
                 tree.root_path()
@@ -310,80 +309,98 @@ impl StoragePage {
                 tree.node(id).name.to_string().into()
             };
             BreadcrumbItem::new(label)
-                .on_click(cx.listener(move |this, _, _, cx| this.navigate(id, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.focus_node(id, cx)))
         });
-
-        let focus = hovered.unwrap_or(current);
-        let focus_node = tree.node(focus);
-        let reveal_path = tree.path_of(focus);
-        let status = format!(
-            "{} · {} · {} files",
-            focus_node.name,
-            focus_node.size.decimal(),
-            focus_node.files
-        );
-        let unreadable = tree.unreadable;
-
-        v_flex()
-            .flex_1()
-            .min_h_0()
-            .gap_3()
+        let parent = tree.node(current).parent;
+        let root = tree.root_path().to_path_buf();
+        let mode = browse.mode;
+        let mode_button = |id: &'static str, label: &'static str, target: BrowseMode| {
+            Button::new(id)
+                .label(label)
+                .small()
+                .ghost()
+                .selected(mode == target)
+                .on_click(cx.listener(move |this, _, _, cx| this.set_mode(target, cx)))
+        };
+        h_flex()
+            .justify_between()
+            .gap_2()
+            .flex_wrap()
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(Breadcrumb::new().children(crumbs)),
+            )
             .child(
                 h_flex()
-                    .justify_between()
-                    .gap_2()
-                    .child(div().min_w_0().overflow_hidden().child(Breadcrumb::new().children(crumbs)))
+                    .gap_1()
+                    .child(mode_button("mode-map", "Map", BrowseMode::Map))
+                    .child(mode_button(
+                        "mode-largest",
+                        "Largest files",
+                        BrowseMode::LargestFiles,
+                    ))
+                    .when_some(parent, |row, parent| {
+                        row.child(
+                            Button::new("up")
+                                .icon(IconName::ArrowUp)
+                                .small()
+                                .ghost()
+                                .tooltip("Up one level")
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.focus_node(parent, cx)),
+                                ),
+                        )
+                    })
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .when(current != NodeId::ROOT, |row| {
-                                let parent = node.parent;
-                                row.child(
-                                    Button::new("up")
-                                        .icon(IconName::ArrowUp)
-                                        .small()
-                                        .ghost()
-                                        .tooltip("Up one level")
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(parent) = parent {
-                                                this.navigate(parent, cx);
-                                            }
-                                        })),
-                                )
-                            })
-                            .child(
-                                Button::new("rescan")
-                                    .icon(Icon::new(gpui_kit::assets::IconName::RefreshCw))
-                                    .small()
-                                    .ghost()
-                                    .tooltip("Scan again")
-                                    .on_click(cx.listener({
-                                        let root = tree.root_path().to_path_buf();
-                                        move |this, _, _, cx| this.start_scan(root.clone(), cx)
-                                    })),
+                        Button::new("rescan")
+                            .icon(Icon::new(gpui_kit::assets::IconName::RefreshCw))
+                            .small()
+                            .ghost()
+                            .tooltip("Scan again")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.start_scan(root.clone(), cx)
+                                }),
                             ),
                     ),
             )
+            .into_any_element()
+    }
+
+    /// Status line for the hovered item plus actions for the selection
+    /// (or the open folder when nothing is selected).
+    fn render_browser_footer(&self, browse: &Browse, cx: &mut Context<Self>) -> AnyElement {
+        let tree = &browse.tree;
+        let focus = tree.node(browse.hovered.unwrap_or(browse.target()));
+        let status = format!(
+            "{} · {} · {} files",
+            focus.name,
+            focus.size.decimal(),
+            focus.files
+        );
+        let target = browse.target();
+        let target_path = tree.path_of(target);
+        let can_trash = target != NodeId::ROOT && target_path.is_some();
+        h_flex()
+            .justify_between()
+            .gap_3()
+            .flex_wrap()
             .child(
                 div()
                     .flex_1()
-                    .min_h(px(280.))
-                    .child(self.render_treemap(&tree, current, cx)),
+                    .min_w(px(160.))
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .truncate()
+                    .child(status),
             )
+            .when(browse.mode == BrowseMode::Map, |row| row.child(legend(cx)))
             .child(
                 h_flex()
-                    .justify_between()
-                    .gap_3()
-                    .flex_wrap()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .truncate()
-                            .child(status),
-                    )
-                    .child(legend(cx))
-                    .when_some(reveal_path, |row, path| {
+                    .gap_1()
+                    .when_some(target_path, |row, path| {
                         row.child(
                             Button::new("reveal")
                                 .label("Reveal in Finder")
@@ -391,18 +408,19 @@ impl StoragePage {
                                 .ghost()
                                 .on_click(move |_, _, cx| cx.reveal_path(&path)),
                         )
+                    })
+                    .when(can_trash, |row| {
+                        row.child(
+                            Button::new("trash")
+                                .label("Move to Trash…")
+                                .small()
+                                .ghost()
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.confirm_trash(target, window, cx)
+                                })),
+                        )
                     }),
             )
-            .when(unreadable > 0, |col| {
-                col.child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(format!(
-                            "{unreadable} folders were skipped because macOS privacy settings block them. Grant Procmon Full Disk Access to include them."
-                        )),
-                )
-            })
             .into_any_element()
     }
 }
