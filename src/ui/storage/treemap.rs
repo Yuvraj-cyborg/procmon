@@ -152,7 +152,13 @@ impl StoragePage {
 
         if nested {
             let inner = Rect::new(GAP, HEADER, r.w - 2.0 * GAP, r.h - HEADER - GAP);
-            let children: Vec<NodeId> = node.children.iter().copied().take(MAX_SUBTILES).collect();
+            let children: Vec<NodeId> = tree
+                .node(skip_single_folders(tree, id))
+                .children
+                .iter()
+                .copied()
+                .take(MAX_SUBTILES)
+                .collect();
             let rects = layout(tree, &children, inner);
             tile.child(
                 label(node.name.to_string(), node.size, r.w, cx)
@@ -240,6 +246,18 @@ impl StoragePage {
             .flatten();
         Some((id, browse.tree.node(id).is_container(), path))
     }
+}
+
+/// Follows chains of folders that contain nothing but one folder (like
+/// `Foo.app/Contents`), so nested tiles show what is actually inside.
+fn skip_single_folders(tree: &FileTree, mut id: NodeId) -> NodeId {
+    while let [only] = tree.node(id).children[..] {
+        if !tree.node(only).is_container() {
+            break;
+        }
+        id = only;
+    }
+    id
 }
 
 fn layout(tree: &FileTree, children: &[NodeId], bounds: Rect) -> Vec<Rect> {
