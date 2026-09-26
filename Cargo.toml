@@ -2,6 +2,9 @@
 name = "procmon"
 version = "0.1.0"
 edition = "2024"
+description = "Memory, CPU, storage and device monitor"
+repository = "https://github.com/Yuvraj-cyborg/procmon"
+authors = ["Yuvraj <yuvrajbiswalofficial@gmail.com>"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -18,3 +21,19 @@ libc = "0.2.189"
 libproc = "0.14.11"
 mach2 = "0.7.0"
 objc2-foundation = "0.3"
+
+# Shipped builds are optimised for size; debug builds stay fast to compile.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[package.metadata.deb]
+section = "utils"
+assets = [
+    ["target/release/procmon", "usr/bin/", "755"],
+    ["packaging/linux/procmon.desktop", "usr/share/applications/", "644"],
+    ["assets/icon/procmon-512.png", "usr/share/icons/hicolor/512x512/apps/procmon.png", "644"],
+]
