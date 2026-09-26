@@ -70,6 +70,12 @@
             # Tests read the live system, which the build sandbox hides.
             doCheck = false;
 
+            # nixpkgs disables cargo's own stripping and by default only strips
+            # debug info, which leaves the full symbol table in the binary.
+            # llvm-strip (used for Mach-O) needs -x instead of the GNU default.
+            stripAllList = [ "bin" ] ++ lib.optional stdenv.isDarwin "Applications";
+            stripAllFlags = lib.optionals stdenv.isDarwin [ "-x" ];
+
             postInstall =
               if stdenv.isDarwin then
                 ''
