@@ -1,3 +1,4 @@
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::table::{DataTable, TableState};
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
@@ -10,6 +11,7 @@ use crate::app::Page;
 use crate::system::Monitor;
 use crate::system::snapshot::{MemoryPressure, MemoryStats};
 use crate::theme::Tint;
+use crate::ui::app_table::AppTable;
 use crate::ui::process_table::{ProcessColumn, ProcessTable};
 use crate::ui::widgets::{
     Card, Meter, PageHeader, Segment, Sparkline, Stat, page_body, page_scroll,
@@ -18,6 +20,8 @@ use crate::ui::widgets::{
 pub struct MemoryPage {
     monitor: Entity<Monitor>,
     table: Entity<TableState<ProcessTable>>,
+    app_table: Entity<TableState<AppTable>>,
+    group_by_app: bool,
     _observer: Subscription,
 }
 
@@ -40,18 +44,30 @@ impl MemoryPage {
             )
             .col_movable(false)
         });
+        let app_table =
+            cx.new(|cx| TableState::new(AppTable::new(), window, cx).col_movable(false));
         let observer = cx.observe(&monitor, |this, monitor, cx| {
             if let Some(snapshot) = monitor.read(cx).latest() {
-                this.table.update(cx, |table, cx| {
-                    table.delegate_mut().update(&snapshot);
-                    cx.notify();
-                });
+                // Only the visible table needs fresh rows.
+                if this.group_by_app {
+                    this.app_table.update(cx, |table, cx| {
+                        table.delegate_mut().update(&snapshot);
+                        cx.notify();
+                    });
+                } else {
+                    this.table.update(cx, |table, cx| {
+                        table.delegate_mut().update(&snapshot);
+                        cx.notify();
+                    });
+                }
             }
             cx.notify();
         });
         Self {
             monitor,
             table,
+            app_table,
+            group_by_app: true,
             _observer: observer,
         }
     }
@@ -154,25 +170,61 @@ impl Render for MemoryPage {
                     .child(header.action(Self::pressure_tag(memory.pressure)))
                     .child(self.render_overview(&memory, cx))
                     .child(
-                        div().flex_1().min_h(px(380.)).flex().child(
-                            Card::new()
-                                .grow()
-                                .title("Who is using memory")
-                                .trailing(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(format!("{process_count} processes")),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_h_0()
-                                        .child(DataTable::new(&self.table).bordered(false).small()),
-                                ),
-                        ),
+                        div()
+                            .flex_1()
+                            .min_h(px(380.))
+                            .flex()
+                            .child(self.render_consumers(process_count, cx)),
                     ),
             )
             .into_any_element()
+    }
+}
+
+impl MemoryPage {
+    fn render_consumers(&self, process_count: usize, cx: &mut Context<Self>) -> AnyElement {
+        let table = if self.group_by_app {
+            DataTable::new(&self.app_table)
+                .bordered(false)
+                .small()
+                .into_any_element()
+        } else {
+            DataTable::new(&self.table)
+                .bordered(false)
+                .small()
+                .into_any_element()
+        };
+        Card::new()
+            .grow()
+            .title("Who is using memory")
+            .trailing(
+                h_flex()
+                    .gap_4()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("{process_count} processes"))
+                    .child(
+                        Switch::new("group-by-app")
+                            .label("Group by app")
+                            .checked(self.group_by_app)
+                            .small()
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.set_group_by_app(*checked, cx)
+                            })),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(table))
+            .into_any_element()
+    }
+
+    fn set_group_by_app(&mut self, group: bool, cx: &mut Context<Self>) {
+        self.group_by_app = group;
+        if let Some(snapshot) = self.monitor.read(cx).latest() {
+            self.app_table
+                .update(cx, |table, _| table.delegate_mut().update(&snapshot));
+            self.table
+                .update(cx, |table, _| table.delegate_mut().update(&snapshot));
+        }
+        cx.notify();
     }
 }

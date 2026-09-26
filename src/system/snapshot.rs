@@ -81,6 +81,9 @@ pub struct LoadAverage {
 pub struct ProcessInfo {
     pub pid: Pid,
     pub name: SharedString,
+    /// Application the process belongs to (its outermost `.app` bundle), or
+    /// the process name for plain executables.
+    pub app: SharedString,
     /// Physical footprint where available (what Activity Monitor calls "Memory"),
     /// otherwise resident set size.
     pub memory: Bytes,
@@ -122,6 +125,38 @@ impl ProcessInfo {
                 .network
                 .map_or(0.0, |n| n.packets.per_sec() / Self::PACKETS)
     }
+}
+
+/// Resource usage of all processes belonging to one application.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppUsage {
+    pub name: SharedString,
+    pub processes: usize,
+    pub memory: Bytes,
+    pub cpu: Percent,
+    pub threads: u32,
+}
+
+/// Rolls processes up by [`ProcessInfo::app`], largest memory first.
+pub fn group_by_app(processes: &[ProcessInfo]) -> Vec<AppUsage> {
+    let mut groups: std::collections::HashMap<&SharedString, AppUsage> =
+        std::collections::HashMap::new();
+    for process in processes {
+        let group = groups.entry(&process.app).or_insert_with(|| AppUsage {
+            name: process.app.clone(),
+            processes: 0,
+            memory: Bytes::ZERO,
+            cpu: Percent::ZERO,
+            threads: 0,
+        });
+        group.processes += 1;
+        group.memory += process.memory;
+        group.cpu = Percent::new(group.cpu.get() + process.cpu.get());
+        group.threads += process.threads.unwrap_or(0);
+    }
+    let mut apps: Vec<AppUsage> = groups.into_values().collect();
+    apps.sort_by(|a, b| b.memory.cmp(&a.memory));
+    apps
 }
 
 /// How chatty a process is with the kernel, per second.
@@ -240,6 +275,36 @@ pub struct ProbeCoverage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn process(app: &str, memory: u64) -> ProcessInfo {
+        ProcessInfo {
+            pid: Pid(1),
+            name: app.into(),
+            app: app.into(),
+            memory: Bytes(memory),
+            cpu: Percent::new(1.0),
+            threads: Some(2),
+            disk_read: Throughput::default(),
+            disk_write: Throughput::default(),
+            run_time: Duration::ZERO,
+            activity: None,
+            network: None,
+        }
+    }
+
+    #[test]
+    fn groups_processes_by_app() {
+        let apps = group_by_app(&[
+            process("Helium", 100),
+            process("yes", 500),
+            process("Helium", 300),
+        ]);
+        assert_eq!(apps.len(), 2);
+        assert_eq!(apps[0].name, "yes");
+        assert_eq!(apps[1].memory, Bytes(400));
+        assert_eq!(apps[1].processes, 2);
+        assert_eq!(apps[1].threads, 4);
+    }
 
     #[test]
     fn quiet_process_has_no_noise() {

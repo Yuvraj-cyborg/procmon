@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod app_table;
 pub mod devices;
 pub mod memory;
 pub mod process_table;

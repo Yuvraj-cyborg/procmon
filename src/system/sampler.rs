@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::SharedString;
 use sysinfo::{
     CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
+    UpdateKind,
 };
 
 use super::network::NetworkProbe;
@@ -50,6 +51,7 @@ impl Sampler {
             .with_cpu()
             .with_memory()
             .with_disk_usage()
+            .with_exe(UpdateKind::OnlyIfNotSet)
     }
 
     pub fn sample(&mut self) -> Snapshot {
@@ -104,6 +106,7 @@ impl Sampler {
                     run_time: Duration::from_secs(process.run_time()),
                     activity,
                     network: network.get(&pid).copied(),
+                    app: app_name(process.exe(), &name),
                     name,
                 }
             })
@@ -164,6 +167,16 @@ impl Sampler {
             },
         }
     }
+}
+
+/// The outermost `.app` bundle an executable lives in, so helpers like
+/// `Foo.app/Contents/Frameworks/Foo Helper (Renderer).app/…` roll up to "Foo".
+/// Falls back to the process name for non-bundled executables.
+fn app_name(exe: Option<&std::path::Path>, process_name: &SharedString) -> SharedString {
+    exe.into_iter()
+        .flat_map(|path| path.components())
+        .find_map(|part| part.as_os_str().to_str()?.strip_suffix(".app"))
+        .map_or_else(|| process_name.clone(), |app| app.to_string().into())
 }
 
 fn throughput(bytes: u64, elapsed: Duration) -> Throughput {
@@ -321,6 +334,20 @@ mod tests {
             alerts.is_empty(),
             "cool-down at 7s must reset the spin timer"
         );
+    }
+
+    #[test]
+    fn helpers_roll_up_to_outermost_app_bundle() {
+        let name: SharedString = "Helium Helper (Renderer)".into();
+        let exe = std::path::Path::new(
+            "/Applications/Helium.app/Contents/Frameworks/Helium Helper (Renderer).app/Contents/MacOS/Helium Helper (Renderer)",
+        );
+        assert_eq!(app_name(Some(exe), &name), "Helium");
+        assert_eq!(
+            app_name(Some(std::path::Path::new("/usr/bin/yes")), &"yes".into()),
+            "yes"
+        );
+        assert_eq!(app_name(None, &name), name);
     }
 
     /// Live smoke test: `cargo test sampler_live -- --ignored --nocapture`.
