@@ -28,15 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        run: rustup show && rustup target add ${{ matrix.target }}
-
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
 
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Build (size-optimised)
+        env:
+          TARGET: ${{ matrix.target }}
+        run: ./scripts/build-release.sh
 
       - name: Import signing certificate
         id: signing
@@ -84,8 +83,10 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             arch: x86_64
           - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
             arch: aarch64
     steps:
       - uses: actions/checkout@v4
@@ -97,24 +98,26 @@ jobs:
             pkg-config libfontconfig-dev libfreetype-dev libxkbcommon-dev \
             libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
 
-      - name: Install Rust
-        run: rustup show
-
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deb
 
-      - name: Build
-        run: cargo build --release --locked
+      - name: Build (size-optimised)
+        env:
+          TARGET: ${{ matrix.target }}
+        run: ./scripts/build-release.sh
 
       - name: Package
         env:
+          TARGET: ${{ matrix.target }}
           ARCH: ${{ matrix.arch }}
         run: |
           ./scripts/package-linux.sh
-          cargo deb --no-build --output dist/
+          cargo deb --no-build --target "$TARGET" --output dist/
 
       - uses: actions/upload-artifact@v4
         with:

@@ -3,12 +3,14 @@
 # local Rust toolchain directly.
 
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-BINARY  := target/release/procmon
+TARGET  ?= $(shell rustc -vV | sed -n 's/^host: //p')
+BINARY  := target/$(TARGET)/release/procmon
+export TARGET
 
 .PHONY: build run test app install dmg linux icon size clean
 
-build: ## Size-optimised release binary
-	cargo build --release --locked
+build: ## Smallest release binary (pinned nightly when rustup is available)
+	./scripts/build-release.sh
 
 run: ## Debug build, launched
 	cargo run
