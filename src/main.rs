@@ -1,6 +1,7 @@
 mod app;
 mod assets;
 mod cli;
+mod devices;
 mod storage;
 mod system;
 mod theme;

@@ -8,8 +8,8 @@ use gpui_kit::{
 use crate::cli::LaunchOptions;
 use crate::system::Monitor;
 use crate::ui::activity::ActivityPage;
+use crate::ui::devices::DevicesPage;
 use crate::ui::memory::MemoryPage;
-use crate::ui::placeholder::Placeholder;
 use crate::ui::storage::StoragePage;
 
 /// A top-level destination in the sidebar.
@@ -93,9 +93,6 @@ impl PageViews {
 impl AppShell {
     pub fn new(options: &LaunchOptions, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let monitor = cx.new(Monitor::new);
-        let placeholder = |page: Page, cx: &mut Context<Self>| -> AnyView {
-            cx.new(|_| Placeholder::new(page)).into()
-        };
         Self {
             page: options.initial_page(),
             views: PageViews {
@@ -108,7 +105,7 @@ impl AppShell {
                 storage: cx
                     .new(|cx| StoragePage::new(options.scan.clone(), window, cx))
                     .into(),
-                devices: placeholder(Page::Devices, cx),
+                devices: cx.new(|cx| DevicesPage::new(window, cx)).into(),
             },
             sidebar_collapsed: false,
         }
