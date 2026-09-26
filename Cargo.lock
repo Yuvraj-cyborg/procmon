@@ -5136,6 +5136,7 @@ dependencies = [
  "libc",
  "libproc",
  "mach2 0.7.0",
+ "rayon",
  "serde_json",
  "sysinfo 0.39.6",
 ]
