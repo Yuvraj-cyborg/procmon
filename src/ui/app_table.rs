@@ -4,6 +4,7 @@ use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme, h_flex};
 use gpui_kit::{App, Context, IntoElement, ParentElement, SharedString, Styled, Window, div, px};
 
+use crate::system::query::ProcessQuery;
 use crate::system::snapshot::{AppUsage, Snapshot, group_by_app};
 use crate::theme::Tint;
 use crate::ui::widgets::Meter;
@@ -73,6 +74,8 @@ impl AppColumn {
 
 /// [`TableDelegate`] showing memory per application instead of per process.
 pub struct AppTable {
+    apps: Vec<AppUsage>,
+    query: ProcessQuery,
     rows: Vec<AppUsage>,
     sort: (AppColumn, ColumnSort),
     total_memory: Bytes,
@@ -81,6 +84,8 @@ pub struct AppTable {
 impl AppTable {
     pub fn new() -> Self {
         Self {
+            apps: Vec::new(),
+            query: ProcessQuery::default(),
             rows: Vec::new(),
             sort: (AppColumn::Memory, ColumnSort::Descending),
             total_memory: Bytes::ZERO,
@@ -88,8 +93,23 @@ impl AppTable {
     }
 
     pub fn update(&mut self, snapshot: &Snapshot) {
-        self.rows = group_by_app(&snapshot.processes);
+        self.apps = group_by_app(&snapshot.processes);
         self.total_memory = snapshot.memory.total;
+        self.rebuild();
+    }
+
+    pub fn set_query(&mut self, query: ProcessQuery) {
+        self.query = query;
+        self.rebuild();
+    }
+
+    fn rebuild(&mut self) {
+        self.rows = self
+            .apps
+            .iter()
+            .filter(|app| self.query.matches_app(app))
+            .cloned()
+            .collect();
         self.apply_sort();
     }
 

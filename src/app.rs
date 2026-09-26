@@ -10,7 +10,8 @@ use gpui_kit::{
 };
 
 use crate::actions::{
-    CloseWindow, Refresh, ShowActivity, ShowDevices, ShowMemory, ShowStorage, ToggleSidebar,
+    CloseWindow, FocusSearch, Refresh, ShowActivity, ShowDevices, ShowMemory, ShowStorage,
+    ToggleSidebar,
 };
 use crate::cli::LaunchOptions;
 use crate::settings::{Settings, ThemePreference};
@@ -139,6 +140,20 @@ impl AppShell {
         }
     }
 
+    fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.page {
+            Page::Memory => self
+                .views
+                .memory
+                .update(cx, |page, cx| page.focus_search(window, cx)),
+            Page::Activity => self
+                .views
+                .activity
+                .update(cx, |page, cx| page.focus_search(window, cx)),
+            Page::Storage | Page::Devices => {}
+        }
+    }
+
     fn sidebar_collapsed(&self, window: &Window) -> bool {
         match self.sidebar {
             SidebarMode::Auto => window.viewport_size().width < SIDEBAR_BREAKPOINT,
@@ -224,6 +239,9 @@ impl Render for AppShell {
             .on_action(cx.listener(|this, _: &ShowStorage, _, cx| this.navigate(Page::Storage, cx)))
             .on_action(cx.listener(|this, _: &ShowDevices, _, cx| this.navigate(Page::Devices, cx)))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh_page(cx)))
+            .on_action(
+                cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)),
+            )
             .on_action(
                 cx.listener(|this, _: &ToggleSidebar, window, cx| this.toggle_sidebar(window, cx)),
             )

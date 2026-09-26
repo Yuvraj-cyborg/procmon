@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme, h_flex};
@@ -8,6 +9,7 @@ use gpui_kit::{
 };
 
 use crate::system::network::NetworkRates;
+use crate::system::query::ProcessQuery;
 use crate::system::snapshot::{ProcessInfo, Snapshot};
 use crate::theme::Tint;
 use crate::ui::widgets::Meter;
@@ -154,6 +156,10 @@ impl ProcessColumn {
 /// [`TableDelegate`] listing processes from the latest [`Snapshot`].
 pub struct ProcessTable {
     columns: Vec<ProcessColumn>,
+    /// Latest snapshot, kept so a new query can re-filter without waiting
+    /// for the next sample.
+    snapshot: Option<Arc<Snapshot>>,
+    query: ProcessQuery,
     rows: Vec<ProcessInfo>,
     sort: (ProcessColumn, ColumnSort),
     total_memory: Bytes,
@@ -164,6 +170,8 @@ impl ProcessTable {
     pub fn new(columns: Vec<ProcessColumn>, sort_by: ProcessColumn) -> Self {
         Self {
             columns,
+            snapshot: None,
+            query: ProcessQuery::default(),
             rows: Vec::new(),
             sort: (sort_by, ColumnSort::Descending),
             total_memory: Bytes::ZERO,
@@ -171,9 +179,27 @@ impl ProcessTable {
         }
     }
 
-    pub fn update(&mut self, snapshot: &Snapshot) {
-        self.rows = snapshot.processes.clone();
+    pub fn update(&mut self, snapshot: &Arc<Snapshot>) {
+        self.snapshot = Some(snapshot.clone());
+        self.rebuild();
+    }
+
+    pub fn set_query(&mut self, query: ProcessQuery) {
+        self.query = query;
+        self.rebuild();
+    }
+
+    fn rebuild(&mut self) {
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
         self.total_memory = snapshot.memory.total;
+        self.rows = snapshot
+            .processes
+            .iter()
+            .filter(|p| self.query.matches_process(p))
+            .cloned()
+            .collect();
         self.apply_sort();
     }
 

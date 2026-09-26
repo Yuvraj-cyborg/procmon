@@ -1,6 +1,7 @@
 //! Small presentational building blocks shared by every page.
 
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, PathBuilder,
     Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, canvas,
@@ -71,6 +72,15 @@ pub fn page_body() -> gpui_kit::Div {
     v_flex().min_h_full().p_6().gap_4()
 }
 
+/// Compact filter box used above process tables.
+pub fn search_field(state: &gpui_kit::Entity<InputState>) -> Input {
+    Input::new(state)
+        .prefix(Icon::new(IconName::Search).small())
+        .cleanable(true)
+        .small()
+        .w(px(220.))
+}
+
 /// A bordered surface used to group related content.
 #[derive(IntoElement)]
 pub struct Card {
@@ -129,6 +139,7 @@ impl RenderOnce for Card {
                 this.child(
                     h_flex()
                         .justify_between()
+                        .flex_wrap()
                         .gap_2()
                         .children(self.title.map(|title| {
                             div()

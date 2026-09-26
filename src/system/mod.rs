@@ -3,6 +3,7 @@
 mod monitor;
 pub mod network;
 mod platform;
+pub mod query;
 mod sampler;
 pub mod snapshot;
 

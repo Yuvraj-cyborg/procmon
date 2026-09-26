@@ -1,4 +1,5 @@
 use gpui_kit::assets::IconName as Lucide;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::table::{DataTable, TableState};
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme, Icon, IconName, Sizable, h_flex, v_flex};
@@ -10,12 +11,13 @@ use gpui_kit::{
 
 use crate::app::Page;
 use crate::system::Monitor;
+use crate::system::query::ProcessQuery;
 use crate::system::snapshot::{
     CpuStats, NoiseReason, ProbeCoverage, ProcessInfo, Snapshot, ThreadAlert, ThreadAlertKind,
 };
 use crate::theme::Tint;
 use crate::ui::process_table::{ProcessColumn, ProcessTable};
-use crate::ui::widgets::{Card, PageHeader, Sparkline, Stat, page_body, page_scroll};
+use crate::ui::widgets::{Card, PageHeader, Sparkline, Stat, page_body, page_scroll, search_field};
 use crate::units::{Ratio, compact_duration};
 
 /// At most this many rows in the "Needs attention" card.
@@ -24,7 +26,8 @@ const ATTENTION_LIMIT: usize = 8;
 pub struct ActivityPage {
     monitor: Entity<Monitor>,
     table: Entity<TableState<ProcessTable>>,
-    _observer: Subscription,
+    search: Entity<InputState>,
+    _subscriptions: [Subscription; 2],
 }
 
 impl ActivityPage {
@@ -56,11 +59,31 @@ impl ActivityPage {
             }
             cx.notify();
         });
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Filter by name or PID")
+                .clean_on_escape()
+        });
+        let filter = cx.subscribe(&search, |this, search, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                let query = ProcessQuery::parse(&search.read(cx).value());
+                this.table.update(cx, |table, cx| {
+                    table.delegate_mut().set_query(query);
+                    cx.notify();
+                });
+            }
+        });
         Self {
             monitor,
             table,
-            _observer: observer,
+            search,
+            _subscriptions: [observer, filter],
         }
+    }
+
+    pub fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search
+            .update(cx, |search, cx| search.focus(window, cx));
     }
 
     fn render_cpu(&self, cpu: &CpuStats, cx: &Context<Self>) -> AnyElement {
@@ -296,12 +319,16 @@ impl Render for ActivityPage {
                     .child(self.render_attention(&snapshot, cx))
                     .child(
                         div().flex_1().min_h(px(380.)).flex().child(
-                            Card::new().grow().title("Processes by CPU").child(
-                                div()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .child(DataTable::new(&self.table).bordered(false).small()),
-                            ),
+                            Card::new()
+                                .grow()
+                                .title("Processes by CPU")
+                                .trailing(search_field(&self.search))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .child(DataTable::new(&self.table).bordered(false).small()),
+                                ),
                         ),
                     ),
             )

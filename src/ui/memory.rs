@@ -1,3 +1,4 @@
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::table::{DataTable, TableState};
 use gpui_kit::component::tag::Tag;
@@ -10,20 +11,22 @@ use gpui_kit::{
 use crate::app::Page;
 use crate::settings::Settings;
 use crate::system::Monitor;
+use crate::system::query::ProcessQuery;
 use crate::system::snapshot::{MemoryPressure, MemoryStats};
 use crate::theme::Tint;
 use crate::ui::app_table::AppTable;
 use crate::ui::process_table::{ProcessColumn, ProcessTable};
 use crate::ui::widgets::{
-    Card, Meter, PageHeader, Segment, Sparkline, Stat, page_body, page_scroll,
+    Card, Meter, PageHeader, Segment, Sparkline, Stat, page_body, page_scroll, search_field,
 };
 
 pub struct MemoryPage {
     monitor: Entity<Monitor>,
     table: Entity<TableState<ProcessTable>>,
     app_table: Entity<TableState<AppTable>>,
+    search: Entity<InputState>,
     group_by_app: bool,
-    _observer: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 impl MemoryPage {
@@ -64,12 +67,24 @@ impl MemoryPage {
             }
             cx.notify();
         });
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Filter by name or PID")
+                .clean_on_escape()
+        });
+        let filter = cx.subscribe(&search, |this, search, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                let query = ProcessQuery::parse(&search.read(cx).value());
+                this.set_query(query, cx);
+            }
+        });
         Self {
             monitor,
             table,
             app_table,
+            search,
             group_by_app: Settings::get(cx).group_by_app,
-            _observer: observer,
+            _subscriptions: [observer, filter],
         }
     }
 
@@ -204,6 +219,7 @@ impl MemoryPage {
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(format!("{process_count} processes"))
+                    .child(search_field(&self.search))
                     .child(
                         Switch::new("group-by-app")
                             .label("Group by app")
@@ -216,6 +232,22 @@ impl MemoryPage {
             )
             .child(div().flex_1().min_h_0().child(table))
             .into_any_element()
+    }
+
+    pub fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search
+            .update(cx, |search, cx| search.focus(window, cx));
+    }
+
+    fn set_query(&mut self, query: ProcessQuery, cx: &mut Context<Self>) {
+        self.app_table.update(cx, |table, cx| {
+            table.delegate_mut().set_query(query.clone());
+            cx.notify();
+        });
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().set_query(query);
+            cx.notify();
+        });
     }
 
     fn set_group_by_app(&mut self, group: bool, cx: &mut Context<Self>) {
