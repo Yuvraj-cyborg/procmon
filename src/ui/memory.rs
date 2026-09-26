@@ -8,6 +8,7 @@ use gpui_kit::{
 };
 
 use crate::app::Page;
+use crate::settings::Settings;
 use crate::system::Monitor;
 use crate::system::snapshot::{MemoryPressure, MemoryStats};
 use crate::theme::Tint;
@@ -67,7 +68,7 @@ impl MemoryPage {
             monitor,
             table,
             app_table,
-            group_by_app: true,
+            group_by_app: Settings::get(cx).group_by_app,
             _observer: observer,
         }
     }
@@ -219,6 +220,7 @@ impl MemoryPage {
 
     fn set_group_by_app(&mut self, group: bool, cx: &mut Context<Self>) {
         self.group_by_app = group;
+        Settings::update(cx, |settings| settings.group_by_app = group);
         if let Some(snapshot) = self.monitor.read(cx).latest() {
             self.app_table
                 .update(cx, |table, _| table.delegate_mut().update(&snapshot));

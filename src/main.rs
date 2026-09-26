@@ -3,6 +3,7 @@ mod app;
 mod assets;
 mod cli;
 mod devices;
+mod settings;
 mod storage;
 mod system;
 mod theme;
@@ -23,6 +24,7 @@ fn main() {
         .run(move |cx| {
             gpui_kit::init(cx);
             actions::init(cx);
+            cx.set_global(settings::Settings::load());
 
             let preferred = size(px(1180.), px(800.));
             let window_size = cx

@@ -1,12 +1,14 @@
 use std::rc::Rc;
 
 use anyhow::Context as _;
-use gpui_kit::component::{Theme, ThemeSet};
+use gpui_kit::component::{Theme, ThemeMode, ThemeSet};
 use gpui_kit::{App, Hsla, Rgba, Window, rgb};
+
+use crate::settings::{Settings, ThemePreference};
 
 const THEME_JSON: &str = include_str!("../assets/themes/procmon.json");
 
-/// Installs the Procmon light/dark palettes and follows the system appearance.
+/// Installs the Procmon light/dark palettes and applies the saved preference.
 pub fn init(window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
     let set: ThemeSet = serde_json::from_str(THEME_JSON).context("parsing bundled theme")?;
     {
@@ -19,8 +21,16 @@ pub fn init(window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
             }
         }
     }
-    Theme::sync_system_appearance(Some(window), cx);
+    apply(Settings::get(cx).theme, window, cx);
     Ok(())
+}
+
+pub fn apply(preference: ThemePreference, window: &mut Window, cx: &mut App) {
+    match preference {
+        ThemePreference::System => Theme::sync_system_appearance(Some(window), cx),
+        ThemePreference::Light => Theme::change(ThemeMode::Light, Some(window), cx),
+        ThemePreference::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
+    }
 }
 
 /// A soft categorical colour, used for treemap tiles, legends and tags.
