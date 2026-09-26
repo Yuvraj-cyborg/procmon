@@ -28,6 +28,13 @@ pub struct TaskCounters {
 /// many threads a task has and listing them.
 pub const THREAD_SLACK: u32 = 16;
 
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(
+        dead_code,
+        reason = "only the macOS probe reports thread states so far"
+    )
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ThreadRunState {
     Uninterruptible,

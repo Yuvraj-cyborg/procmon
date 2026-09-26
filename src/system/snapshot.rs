@@ -43,6 +43,13 @@ pub struct MemoryBreakdown {
     pub free: Bytes,
 }
 
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(
+        dead_code,
+        reason = "only macOS reports a memory pressure level so far"
+    )
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryPressure {
     Normal,

@@ -68,6 +68,10 @@ pub struct Device {
     pub driver: Option<String>,
 }
 
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS collector reports drivers so far")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverKind {
     /// Classic kernel extension loaded into the kernel.
@@ -88,6 +92,10 @@ impl DriverKind {
     }
 }
 
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS collector reports drivers so far")
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriverState {
     /// Loaded / activated and enabled: working.

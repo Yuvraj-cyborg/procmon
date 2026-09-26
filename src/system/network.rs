@@ -92,6 +92,7 @@ fn read_totals() -> Option<HashMap<Pid, NetworkTotals>> {
 
 /// Parses `nettop -P -L 1 -x` CSV. Columns are located by header name because
 /// `nettop` documents that their order may change.
+#[cfg(any(target_os = "macos", test))]
 fn parse_nettop_csv(csv: &str) -> HashMap<Pid, NetworkTotals> {
     let mut lines = csv.lines();
     let Some(header) = lines.next() else {
