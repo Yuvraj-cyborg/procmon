@@ -115,10 +115,6 @@
               [
                 toolchain
                 pkgs.cargo-bloat
-                pkgs.nodejs
-                pkgs.oxipng
-                pkgs.pngquant
-                pkgs.resvg
               ]
               ++ lib.optionals stdenv.isLinux ([ pkgs.pkg-config ] ++ linuxLibs);
 

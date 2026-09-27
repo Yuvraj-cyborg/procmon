@@ -7,7 +7,7 @@ TARGET  ?= $(shell rustc -vV | sed -n 's/^host: //p')
 BINARY  := target/$(TARGET)/release/procmon
 export TARGET
 
-.PHONY: build run test app install dmg linux icon size clean
+.PHONY: build run test app install dmg linux size clean
 
 build: ## Smallest release binary (pinned nightly when rustup is available)
 	./scripts/build-release.sh
@@ -31,9 +31,6 @@ dmg: app ## dist/Procmon-<version>-macos-<arch>.dmg
 
 linux: build ## dist/procmon-<version>-linux-<arch>.tar.gz
 	./scripts/package-linux.sh
-
-icon: ## Regenerate assets/icon from scripts/icon/generate.mjs (needs node + resvg)
-	./scripts/icon/build.sh
 
 size: build ## Report binary size
 	@ls -lh $(BINARY) | awk '{print "procmon $(VERSION):", $$5}'
