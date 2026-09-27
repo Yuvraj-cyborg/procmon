@@ -78,11 +78,6 @@ Without Nix you need Rust (the version in `rust-toolchain.toml` is picked up aut
 | `make linux` | `dist/procmon-<version>-linux-<arch>.tar.gz` |
 | `make icon` | Regenerates the icon from `scripts/icon/generate.mjs` |
 
-### Binary size
-
-Release builds are tuned for size: `opt-level = "z"`, fat LTO, one codegen unit, `panic = "abort"` and stripped symbols (25.3 MB → 7.4 MB). With rustup available, `scripts/build-release.sh` goes further using a pinned nightly to rebuild `std` for size (immediate-abort panics, no panic location strings, std's size-optimised paths), bringing the macOS binary to about 6.2 MB. The DMG compresses that to ~2.7 MB. Nearly all of what remains is GPUI and its component library, so this is close to the floor for a GPUI app.
-
-The Linux binary is larger (~18 MB) because GPUI renders through wgpu there (Vulkan and GL backends plus the naga shader compiler) and talks to desktop portals over D-Bus; the `.deb` is ~5.4 MB.
 
 ### Command-line options
 
@@ -146,22 +141,6 @@ flake.nix              pinned toolchain, dev shell and package
 ## Platform support
 
 Procmon is built for macOS first. Linux x86_64 and aarch64 builds are produced by CI; there, memory, CPU, processes and disk scans work through `sysinfo`, while thread states, kernel counters, per-process network, the device inventory and Trash are macOS-only for now. Windows builds are planned; the disk scanner and process control still need Windows implementations.
-
-## Releases and signing
-
-Pushing a tag like `v0.1.0` runs `.github/workflows/release.yml`, which builds all four targets and publishes a GitHub release with SHA-256 checksums. It can also be started by hand from the Actions tab to test packaging without publishing.
-
-macOS DMGs are signed with a Developer ID and notarized when these repository secrets exist, and ad-hoc signed otherwise:
-
-| Secret | Contents |
-| --- | --- |
-| `APPLE_CERTIFICATE_P12` | Base64 of your exported "Developer ID Application" certificate (.p12) |
-| `APPLE_CERTIFICATE_PASSWORD` | The password chosen when exporting it |
-| `APPLE_SIGNING_IDENTITY` | Optional; defaults to the first Developer ID in the certificate |
-| `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID` | App Store Connect API key for notarization (recommended) |
-| `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` | Or: Apple ID with an app-specific password |
-
-`scripts/ci/set-github-secrets.sh path/to/certificate.p12` sets them for you with the GitHub CLI.
 
 ## Tests
 
