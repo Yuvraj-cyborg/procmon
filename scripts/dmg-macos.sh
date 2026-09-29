@@ -39,8 +39,16 @@ if [[ "$identity" != "-" ]]; then
   fi
 
   if (( ${#notary_args[@]} )); then
-    result=$(xcrun notarytool submit "$dmg" "${notary_args[@]}" --wait --timeout 30m --output-format json)
+    # First submissions for a new Developer ID often sit In Progress well past 30 minutes.
+    set +e
+    result=$(xcrun notarytool submit "$dmg" "${notary_args[@]}" --wait --timeout 2h --output-format json)
+    notary_code=$?
+    set -e
     echo "$result"
+    if [[ "$notary_code" -ne 0 ]]; then
+      echo "notarytool exited $notary_code" >&2
+      exit "$notary_code"
+    fi
     status=$(plutil -extract status raw -o - - <<< "$result")
     if [[ "$status" != "Accepted" ]]; then
       xcrun notarytool log "$(plutil -extract id raw -o - - <<< "$result")" "${notary_args[@]}" >&2
