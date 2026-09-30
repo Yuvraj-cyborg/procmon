@@ -86,6 +86,10 @@ impl Settings {
 }
 
 fn settings_path() -> Option<PathBuf> {
+    if cfg!(windows) {
+        let app_data = PathBuf::from(std::env::var_os("APPDATA")?);
+        return Some(app_data.join("Procmon").join("settings.json"));
+    }
     let home = PathBuf::from(std::env::var_os("HOME")?);
     let dir = if cfg!(target_os = "macos") {
         home.join("Library/Application Support/Procmon")
