@@ -11,7 +11,7 @@
 #   TARGET   Rust target triple (default: host)
 #   NIGHTLY  toolchain for size builds (default below); set STABLE=1 to skip it
 #
-# Output: target/<TARGET>/release/procmon
+# Output: target/<TARGET>/release/procmon (procmon.exe on Windows)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -29,4 +29,5 @@ else
 fi
 
 binary="target/$target/release/procmon"
+[[ -f "$binary.exe" ]] && binary="$binary.exe"
 echo "built $binary ($(du -h "$binary" | cut -f1))"
