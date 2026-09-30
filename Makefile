@@ -1,24 +1,40 @@
 # Short commands for building and packaging Procmon.
-# Run inside `nix develop` to get the pinned toolchain and tools, or use a
-# local Rust toolchain directly.
+#
+# macOS: the native Swift app in macos/ (needs Xcode 26 or newer).
+# Linux and Windows: the Rust app in the repository root. Run inside
+# `nix develop` to get the pinned toolchain, or use a local Rust toolchain.
 
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-TARGET  ?= $(shell rustc -vV | sed -n 's/^host: //p')
-BINARY  := target/$(TARGET)/release/procmon
+TARGET  ?= $(shell rustc -vV 2>/dev/null | sed -n 's/^host: //p')
 export TARGET
 
-.PHONY: build run test app install dmg linux size clean
+.PHONY: build run test app install dmg rust rust-run rust-test linux size clean
 
-build: ## Smallest release binary (pinned nightly when rustup is available)
-	./scripts/build-release.sh
+ifeq ($(shell uname -s),Darwin)
+build: ## Smallest macOS binary
+	./scripts/build-macos.sh
 
-run: ## Debug build, launched
-	cargo run
+run: ## macOS app, debug build
+	swift run --package-path macos
 
 test:
-	cargo test
+	swift test --package-path macos
 
-app: build ## dist/Procmon.app (ad-hoc signed unless SIGN_IDENTITY is set)
+size: build ## Report binary size
+	@ls -lh macos/.build/$(shell uname -m)/$(shell uname -m)-apple-macosx/release/Procmon | awk '{print "Procmon $(VERSION):", $$5}'
+else
+build: rust
+
+run: rust-run
+
+test: rust-test
+
+size: rust ## Report binary size
+	@ls -lh target/$(TARGET)/release/procmon | awk '{print "procmon $(VERSION):", $$5}'
+endif
+
+app: ## dist/Procmon.app (ad-hoc signed unless SIGN_IDENTITY is set)
+	./scripts/build-macos.sh
 	./scripts/bundle-macos.sh
 
 install: app ## Copy Procmon.app into /Applications
@@ -29,12 +45,18 @@ install: app ## Copy Procmon.app into /Applications
 dmg: app ## dist/Procmon-<version>-macos-<arch>.dmg
 	./scripts/dmg-macos.sh
 
-linux: build ## dist/procmon-<version>-linux-<arch>.tar.gz
-	./scripts/package-linux.sh
+rust: ## Smallest Rust release binary (pinned nightly when rustup is available)
+	./scripts/build-release.sh
 
-size: build ## Report binary size
-	@ls -lh $(BINARY) | awk '{print "procmon $(VERSION):", $$5}'
+rust-run: ## Rust app, debug build
+	cargo run
+
+rust-test:
+	cargo test
+
+linux: rust ## dist/procmon-<version>-linux-<arch>.tar.gz
+	./scripts/package-linux.sh
 
 clean:
 	cargo clean
-	rm -rf dist
+	rm -rf dist macos/.build
