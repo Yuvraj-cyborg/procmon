@@ -2,7 +2,6 @@ use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -20,9 +19,52 @@ const FILES_PER_FOLDER: usize = 64;
 /// map and the largest-files list.
 const ALWAYS_KEEP: u64 = 16 * 1024 * 1024;
 
-/// `st_blocks` is always counted in 512-byte units, regardless of the
-/// filesystem's block size.
-const BLOCK_SIZE: u64 = 512;
+/// Filesystem facts the scanner needs. Unix exposes them directly; other
+/// platforms get the closest portable equivalent.
+#[cfg(unix)]
+mod disk {
+    use std::fs::Metadata;
+    use std::os::unix::fs::MetadataExt;
+
+    /// `st_blocks` is always counted in 512-byte units, regardless of the
+    /// filesystem's block size.
+    const BLOCK_SIZE: u64 = 512;
+
+    /// Allocated size, so sparse and cloned files count the way the disk sees them.
+    pub fn allocated(meta: &Metadata) -> u64 {
+        meta.blocks() * BLOCK_SIZE
+    }
+
+    pub fn device(meta: &Metadata) -> u64 {
+        meta.dev()
+    }
+
+    /// Identity of a file that has several hard links, so it is counted once.
+    pub fn hard_link(meta: &Metadata) -> Option<(u64, u64)> {
+        (meta.nlink() > 1).then(|| (meta.dev(), meta.ino()))
+    }
+}
+
+#[cfg(not(unix))]
+mod disk {
+    use std::fs::Metadata;
+
+    /// The standard library does not report allocated clusters here, so the
+    /// logical length is the closest measure.
+    pub fn allocated(meta: &Metadata) -> u64 {
+        meta.len()
+    }
+
+    /// No portable volume id: everything counts as one volume. Symlinks and
+    /// junctions are still skipped, so a scan cannot wander off the drive.
+    pub fn device(_: &Metadata) -> u64 {
+        0
+    }
+
+    pub fn hard_link(_: &Metadata) -> Option<(u64, u64)> {
+        None
+    }
+}
 
 /// Live counters shared between the scanning threads and the UI.
 #[derive(Debug, Default)]
@@ -93,13 +135,13 @@ pub fn scan(root: &Path, progress: &ScanProgress) -> Result<FileTree, ScanError>
         )));
     }
     let context = Context {
-        device: meta.dev(),
+        device: disk::device(&meta),
         progress,
         hard_links: Mutex::new(HashSet::new()),
         unreadable: AtomicU64::new(0),
     };
     let name: Box<str> = root.display().to_string().into();
-    let scanned = scan_dir(root, name, meta.blocks() * BLOCK_SIZE, &context);
+    let scanned = scan_dir(root, name, disk::allocated(&meta), &context);
     if progress.is_cancelled() {
         return Err(ScanError::Cancelled);
     }
@@ -149,19 +191,15 @@ fn scan_dir(path: &Path, name: Box<str>, own_size: u64, cx: &Context<'_>) -> Sca
             continue;
         }
         let entry_name: Box<str> = entry.file_name().to_string_lossy().into();
-        let size = meta.blocks() * BLOCK_SIZE;
+        let size = disk::allocated(&meta);
         if file_type.is_dir() {
-            if meta.dev() == cx.device {
+            if disk::device(&meta) == cx.device {
                 subdirs.push((entry.path(), entry_name, size));
             }
             continue;
         }
-        if meta.nlink() > 1
-            && !cx
-                .hard_links
-                .lock()
-                .unwrap()
-                .insert((meta.dev(), meta.ino()))
+        if let Some(link) = disk::hard_link(&meta)
+            && !cx.hard_links.lock().unwrap().insert(link)
         {
             continue;
         }
@@ -253,6 +291,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn hard_links_count_once_and_symlinks_are_skipped() {
         let root = temp_dir("links");
