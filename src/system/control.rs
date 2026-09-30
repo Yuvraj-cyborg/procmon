@@ -64,7 +64,41 @@ fn deliver(pid: Pid, signal: Signal) -> Result<(), SignalError> {
     })
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn deliver(pid: Pid, _signal: Signal) -> Result<(), SignalError> {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+
+    fn last_error() -> SignalError {
+        // SAFETY: `GetLastError` only reads the calling thread's error slot.
+        match unsafe { GetLastError() } {
+            ERROR_ACCESS_DENIED => SignalError::NotPermitted,
+            ERROR_INVALID_PARAMETER => SignalError::NoSuchProcess,
+            code => SignalError::Other(io::Error::from_raw_os_error(code as i32)),
+        }
+    }
+
+    // Windows has no polite equivalent of SIGTERM for an arbitrary process,
+    // so both signals end it.
+    // SAFETY: plain Win32 calls; the handle is closed before returning.
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid.0);
+        if handle.is_null() {
+            return Err(last_error());
+        }
+        let result = if TerminateProcess(handle, 1) == 0 {
+            Err(last_error())
+        } else {
+            Ok(())
+        };
+        CloseHandle(handle);
+        result
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn deliver(_pid: Pid, _signal: Signal) -> Result<(), SignalError> {
     Err(SignalError::Other(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -95,10 +129,15 @@ mod tests {
 
     #[test]
     fn terminates_a_child_process() {
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
+        let mut child = if cfg!(windows) {
+            std::process::Command::new("ping")
+                .args(["-n", "30", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .spawn()
+        } else {
+            std::process::Command::new("sleep").arg("30").spawn()
+        }
+        .unwrap();
         send(Pid(child.id()), Signal::Terminate).unwrap();
         let status = child.wait().unwrap();
         assert!(!status.success());
