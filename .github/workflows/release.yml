@@ -14,28 +14,18 @@ env:
 jobs:
   macos:
     name: macOS (${{ matrix.arch }})
-    runs-on: macos-15
+    runs-on: macos-26
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: aarch64-apple-darwin
-            arch: arm64
-          - target: x86_64-apple-darwin
-            arch: x86_64
+        arch: [arm64, x86_64]
     env:
-      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v5
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-
       - name: Build (size-optimised)
-        env:
-          TARGET: ${{ matrix.target }}
-        run: ./scripts/build-release.sh
+        run: ./scripts/build-macos.sh
 
       - name: Import signing certificate
         id: signing
@@ -57,8 +47,6 @@ jobs:
 
       - name: Bundle, sign, notarize
         env:
-          TARGET: ${{ matrix.target }}
-          ARCH: ${{ matrix.arch }}
           SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
@@ -127,9 +115,38 @@ jobs:
             dist/*.deb
           if-no-files-found: error
 
+  windows:
+    name: Windows (x86_64)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (size-optimised)
+        shell: bash
+        env:
+          # The nightly std rebuild is only exercised on macOS and Linux so far.
+          STABLE: "1"
+        run: ./scripts/build-release.sh
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/procmon.exe `
+            -DestinationPath "dist/procmon-$version-windows-x86_64.zip"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: procmon-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: [macos, linux]
+    needs: [macos, linux, windows]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
