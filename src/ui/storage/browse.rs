@@ -117,7 +117,7 @@ impl StoragePage {
             dialog
                 .title(format!("Move “{name}” to the Trash?"))
                 .description(format!(
-                    "{} will be freed once you empty the Trash. You can put it back from Finder until then.",
+                    "{} will be freed once you empty the Trash. You can restore it from the Trash until then.",
                     size.decimal()
                 ))
                 .button_props(

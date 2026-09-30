@@ -286,8 +286,7 @@ impl StoragePage {
             .child(footer)
             .when(unreadable > 0, |col| {
                 col.child(div().text_xs().text_color(muted).child(format!(
-                    "{unreadable} folders were skipped because macOS privacy settings block them. \
-                     Grant Procmon Full Disk Access to include them."
+                    "{unreadable} folders were skipped because Procmon is not allowed to read them."
                 )))
             })
             .into_any_element()
@@ -403,7 +402,7 @@ impl StoragePage {
                     .when_some(target_path, |row, path| {
                         row.child(
                             Button::new("reveal")
-                                .label("Reveal in Finder")
+                                .label("Show in Folder")
                                 .small()
                                 .ghost()
                                 .on_click(move |_, _, cx| cx.reveal_path(&path)),

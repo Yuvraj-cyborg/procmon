@@ -86,7 +86,7 @@ impl ProcessDetail {
                                 .icon(IconName::FolderOpen)
                                 .xsmall()
                                 .ghost()
-                                .tooltip("Reveal executable in Finder")
+                                .tooltip("Show the executable in its folder")
                                 .on_click(move |_, _, cx| cx.reveal_path(&path)),
                         ),
                 )

@@ -76,7 +76,7 @@ impl StoragePage {
                                 .icon(IconName::FolderOpen)
                                 .xsmall()
                                 .ghost()
-                                .tooltip("Reveal in Finder")
+                                .tooltip("Show in folder")
                                 .on_click(move |_, _, cx| {
                                     cx.stop_propagation();
                                     cx.reveal_path(&path);

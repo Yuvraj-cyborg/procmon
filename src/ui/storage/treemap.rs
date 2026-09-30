@@ -85,7 +85,7 @@ impl StoragePage {
                 })
                 .when_some(path, |menu, path| {
                     menu.item(
-                        PopupMenuItem::new("Reveal in Finder")
+                        PopupMenuItem::new("Show in Folder")
                             .on_click(move |_, _, cx| cx.reveal_path(&path)),
                     )
                     .separator()
