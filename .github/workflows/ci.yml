@@ -9,13 +9,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
+  macos:
+    name: macOS app (Swift)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build
+        run: swift build --package-path macos -c release
+
+      - name: Test
+        run: swift test --package-path macos
+
+  rust:
+    name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-22.04]
+        os: [ubuntu-22.04, windows-2025]
     steps:
       - uses: actions/checkout@v5
 
