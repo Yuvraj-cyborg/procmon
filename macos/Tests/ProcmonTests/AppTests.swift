@@ -30,13 +30,7 @@ import Testing
 
 @Suite struct ProcessListTests {
     private func process(_ pid: Int32, _ name: String, memory: UInt64?, cpu: Double) -> ProcessSample {
-        ProcessSample(
-            pid: PID(pid), name: name, app: name, executable: nil, runTime: nil,
-            metrics: memory.map {
-                ProcessMetrics(memory: Bytes($0), cpu: Percent(cpu), threads: 1, diskRead: .zero, diskWrite: .zero, activity: nil)
-            },
-            network: nil
-        )
+        .fixture(pid: pid, name: name, memory: memory, cpu: cpu)
     }
 
     @Test func sortsNumbersDescendingWithUnknownLast() {
@@ -51,12 +45,21 @@ import Testing
     }
 
     @Test func narrowWidthsDropLowPriorityColumns() {
-        let columns: [ProcessColumn] = [.name, .cpu, .syscalls, .packets, .pid]
+        let columns: [ProcessColumn] = [.name, .cpu, .memory, .threads, .blocked, .pid]
         #expect(ProcessColumn.fitting(columns, in: 2000) == columns)
         let narrow = ProcessColumn.fitting(columns, in: 420)
         #expect(narrow.first == .name)
         #expect(narrow.contains(.cpu))
-        #expect(!narrow.contains(.packets))
+        #expect(!narrow.contains(.pid))
+    }
+
+    @Test func onlyBlockedThreadsAreShownAndColoured() {
+        let calm = ProcessSample.fixture(pid: 1, name: "a")
+        #expect(ProcessColumn.blocked.text(calm) == "")
+        #expect(ProcessColumn.blocked.level(calm) == .normal)
+        let stuck = ProcessSample.fixture(pid: 2, name: "b", blocked: 3)
+        #expect(ProcessColumn.blocked.text(stuck) == "3")
+        #expect(ProcessColumn.blocked.level(stuck) == .critical)
     }
 
     @MainActor @Test func findsOutermostAppBundle() {
@@ -66,8 +69,8 @@ import Testing
     }
 
     @Test func splitsNumberFromUnit() {
-        #expect(splitUnit("11.4 GB") == ("11.4", "GB"))
-        #expect(splitUnit("42") == ("42", nil))
+        #expect(Format.split("11.4 GB") == ("11.4", "GB"))
+        #expect(Format.split("42") == ("42", nil))
     }
 }
 

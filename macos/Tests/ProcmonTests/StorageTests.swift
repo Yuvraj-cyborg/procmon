@@ -56,20 +56,16 @@ import Testing
 }
 
 @Suite struct FileTreeTests {
-    private func node(_ name: String, _ size: UInt64, _ category: FileCategory, _ parent: NodeID?, files: UInt64? = nil) -> FileNode {
-        FileNode(name: name, size: Bytes(size), category: category, files: files ?? (category == .folder ? 0 : 1), parent: parent, children: [])
-    }
-
     /// root (1000) ─ a/ (900) ─ big.mov (600), small.txt (300)
     ///             └ c.zip (100)
     private func sample() -> (FileTree, a: NodeID, c: NodeID, big: NodeID, small: NodeID) {
-        var tree = FileTree(rootPath: "/r", root: node("r", 1000, .folder, nil, files: 3))
-        let a = tree.append(node("a", 900, .folder, .root, files: 2))
-        let c = tree.append(node("c.zip", 100, .archive, .root))
-        let big = tree.append(node("big.mov", 600, .video, a))
-        let small = tree.append(node("small.txt", 300, .document, a))
-        tree[.root].children = [a, c]
-        tree[a].children = [big, small]
+        var tree = FileTree(rootPath: "/r", rootSize: Bytes(1000), rootFiles: 3)
+        let a = tree.append(name: "a", size: Bytes(900), category: .folder, files: 2, parent: .root)
+        let c = tree.append(name: "c.zip", size: Bytes(100), category: .archive, files: 1, parent: .root)
+        let big = tree.append(name: "big.mov", size: Bytes(600), category: .video, files: 1, parent: a)
+        let small = tree.append(name: "small.txt", size: Bytes(300), category: .document, files: 1, parent: a)
+        tree.setChildren([a, c], of: .root)
+        tree.setChildren([big, small], of: a)
         return (tree, a, c, big, small)
     }
 
@@ -89,7 +85,7 @@ import Testing
         #expect(!tree.largestFiles(limit: 10).contains(big))
 
         tree.remove(a)
-        #expect(tree[.root].children == [c])
+        #expect(Array(tree.children(of: .root)) == [c])
         #expect(tree[.root].size == Bytes(100))
     }
 
@@ -126,11 +122,12 @@ import Testing
         let tree = try Scanner.scan(root: root.path, progress: ScanProgress())
         let top = tree[.root]
         #expect(top.files == 2)
-        let first = tree[top.children[0]]
+        let firstID = tree.children(of: .root)[0]
+        let first = tree[firstID]
         #expect(first.name == "big")
         #expect(first.size >= Bytes(256 * 1024))
-        #expect(top.size >= top.children.map { tree[$0].size }.sum())
-        #expect(tree.path(of: first.children[0]) == root.appendingPathComponent("big/blob.bin").path)
+        #expect(top.size >= tree.children(of: .root).map { tree.size(of: $0) }.sum())
+        #expect(tree.path(of: tree.children(of: firstID)[0]) == root.appendingPathComponent("big/blob.bin").path)
     }
 
     @Test func hardLinksCountOnceAndSymlinksAreSkipped() throws {
@@ -153,9 +150,9 @@ import Testing
         }
         let tree = try Scanner.scan(root: root.path, progress: ScanProgress())
         let top = tree[.root]
-        #expect(top.children.count == Scanner.filesPerFolder + 1)
+        #expect(tree.children(of: .root).count == Scanner.filesPerFolder + 1)
         #expect(top.files == UInt64(Scanner.filesPerFolder + 10))
-        let remainder = try #require(top.children.first { tree[$0].category == .remainder })
+        let remainder = try #require(tree.children(of: .root).first { tree.category(of: $0) == .remainder })
         #expect(tree[remainder].files == 10)
         #expect(tree.path(of: remainder) == nil)
     }
@@ -173,7 +170,7 @@ import Testing
         }
         let tree = try Scanner.scan(root: root.path, progress: ScanProgress())
         #expect(tree[.root].files == 8)
-        #expect(tree[.root].children.count == 8)
+        #expect(tree.children(of: .root).count == 8)
     }
 
     @Test func cancelledScanReportsCancellation() throws {

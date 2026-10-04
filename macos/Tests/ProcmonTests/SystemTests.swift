@@ -4,11 +4,7 @@ import Testing
 
 @Suite struct SnapshotTests {
     private func process(_ app: String, memory: UInt64, pid: Int32 = 1) -> ProcessSample {
-        ProcessSample(
-            pid: PID(pid), name: app, app: app, executable: nil, runTime: nil,
-            metrics: ProcessMetrics(memory: Bytes(memory), cpu: Percent(1), threads: 2, diskRead: .zero, diskWrite: .zero, activity: nil),
-            network: nil
-        )
+        .fixture(pid: pid, name: app, memory: memory, cpu: 1, threads: 2)
     }
 
     @Test func groupsProcessesByApp() {
@@ -32,9 +28,7 @@ import Testing
     }
 
     @Test func queryMatchesNameAppOrExactPID() {
-        let helper = ProcessSample(
-            pid: PID(4242), name: "Helium Helper (Renderer)", app: "Helium", executable: nil, runTime: nil, metrics: nil, network: nil
-        )
+        let helper = ProcessSample.fixture(pid: 4242, name: "Helium Helper (Renderer)", app: "Helium", memory: nil)
         #expect(ProcessQuery("").matches(helper))
         #expect(ProcessQuery("  renderer ").matches(helper))
         #expect(ProcessQuery("HELIUM").matches(helper))
@@ -166,6 +160,15 @@ struct LiveSystemTests {
         #expect(!snapshot.processes.isEmpty)
         #expect(snapshot.memory.total > .zero)
         #expect(snapshot.processes.contains { $0.pid == PID(getpid()) && !$0.isRestricted })
+    }
+
+    @Test func stacksOfARealProcessAreRead() throws {
+        let stacks = try ThreadStacks.capture(PID(getpid()), seconds: 1)
+        let threads = try #require(ProcessProbe.threads(PID(getpid()), hint: 64))
+        print("\(stacks.count) stacks: " + stacks.values.map { "\($0.thread) \($0.name ?? "-") → \($0.activity.summary)" }.joined(separator: "; "))
+        #expect(!stacks.isEmpty)
+        // The ids from libproc and from `sample` are the same numbers.
+        #expect(!Set(threads.map(\.id)).isDisjoint(with: stacks.keys))
     }
 
     @Test func deviceInventoryFindsHardware() {
