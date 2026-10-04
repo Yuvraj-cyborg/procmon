@@ -4,16 +4,21 @@
 #
 # Environment:
 #   ARCH           suffix for the file name, e.g. arm64 or x86_64 (default: host)
-#   SIGN_IDENTITY  codesign identity for the DMG (skipped when unset or "-")
-#   Notarization, either an App Store Connect API key:
-#     APPLE_API_KEY_PATH, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID
-#   or an Apple ID with an app-specific password:
-#     APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
+#   SIGN_IDENTITY  codesign identity for the DMG; unset uses the app's own
+#                  signature (the one bundle-macos.sh chose), "-" skips signing
+#   Notarization, one of:
+#     NOTARY_PROFILE  a profile saved with `xcrun notarytool store-credentials`
+#     APPLE_API_KEY_PATH, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID  (API key)
+#     APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD  (app-specific password)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 arch="${ARCH:-$(uname -m)}"
+if [[ -z "${SIGN_IDENTITY+set}" ]]; then
+  # Sign the DMG with whatever signed the app inside it.
+  SIGN_IDENTITY=$(codesign -dvv dist/Procmon.app 2>&1 | sed -n 's/^Authority=\(Developer ID Application: .*\)/\1/p' | head -1)
+fi
 identity="${SIGN_IDENTITY:--}"
 dmg="dist/Procmon-$version-macos-$arch.dmg"
 
@@ -32,7 +37,9 @@ if [[ "$identity" != "-" ]]; then
   codesign --force --sign "$identity" --timestamp "$dmg"
 
   notary_args=()
-  if [[ -n "${APPLE_API_KEY_ID:-}" ]]; then
+  if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+    notary_args=(--keychain-profile "$NOTARY_PROFILE")
+  elif [[ -n "${APPLE_API_KEY_ID:-}" ]]; then
     notary_args=(--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID")
   elif [[ -n "${APPLE_ID:-}" ]]; then
     notary_args=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
