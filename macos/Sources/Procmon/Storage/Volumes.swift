@@ -12,6 +12,8 @@ struct Volume: Identifiable, Sendable {
     let total: Bytes
     let available: Bytes
     let isRemovable: Bool
+    /// Mounted disk images and the like: nothing can be written, so "free" is meaningless.
+    let isReadOnly: Bool
 
     var id: String { mountPoint }
     var used: Bytes { total - available }
@@ -26,7 +28,7 @@ struct Volume: Identifiable, Sendable {
         let keys: [URLResourceKey] = [
             .volumeLocalizedNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey,
             .volumeAvailableCapacityForImportantUsageKey, .volumeIsRemovableKey, .volumeIsEjectableKey,
-            .volumeLocalizedFormatDescriptionKey, .volumeIsRootFileSystemKey,
+            .volumeLocalizedFormatDescriptionKey, .volumeIsRootFileSystemKey, .volumeIsReadOnlyKey,
         ]
         let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
         let hasDataVolume = FileManager.default.fileExists(atPath: dataVolume)
@@ -44,10 +46,12 @@ struct Volume: Identifiable, Sendable {
                 format: values.volumeLocalizedFormatDescription ?? "",
                 total: Bytes(UInt64(total)),
                 available: Bytes(UInt64(max(0, available))),
-                isRemovable: (values.volumeIsRemovable ?? false) || (values.volumeIsEjectable ?? false)
+                isRemovable: (values.volumeIsRemovable ?? false) || (values.volumeIsEjectable ?? false),
+                isReadOnly: values.volumeIsReadOnly ?? false
             )
         }
-        return volumes.sorted { ($0.isRemovable ? 1 : 0, $1.total) < ($1.isRemovable ? 1 : 0, $0.total) }
+        func rank(_ volume: Volume) -> Int { volume.isReadOnly ? 2 : volume.isRemovable ? 1 : 0 }
+        return volumes.sorted { (rank($0), $1.total) < (rank($1), $0.total) }
     }
 
     /// The volume holding the user's files.
@@ -59,13 +63,6 @@ struct Volume: Identifiable, Sendable {
 enum Finder {
     static func reveal(_ path: String) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-    }
-
-    /// Opens System Settings at Privacy & Security › Full Disk Access.
-    static func openFullDiskAccessSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     /// Moves `path` to the user's Trash, where Finder can put it back.

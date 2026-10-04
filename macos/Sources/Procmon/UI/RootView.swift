@@ -1,25 +1,36 @@
 // The window's content: a floating toolbar over the current page, plus the
 // process inspector, confirmations and toasts that any page can raise.
 
+import AppKit
 import SwiftUI
 
 struct RootView: View {
+    /// The page keeps at least this much room next to the inspector; below
+    /// its comfortable width, pages wrap rather than overflow.
+    static let minimumPageWidth: CGFloat = 420
+    static let comfortablePageWidth: CGFloat = 600
+    static let inspectorWidth: CGFloat = 340
+
     @Environment(AppModel.self) private var model
     @State private var width: CGFloat = 1200
+    @State private var window: NSWindow?
 
     var body: some View {
         @Bindable var model = model
         PageContainer(page: model.page)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: Self.minimumPageWidth, maxWidth: .infinity, maxHeight: .infinity)
             .background(Palette.canvas)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    BrandMark()
+                // Narrow windows keep their toolbar room for the pages.
+                if width >= 900 {
+                    ToolbarItem(placement: .navigation) {
+                        BrandMark(compact: width < 1_020)
+                    }
+                    .withoutSharedBackground()
                 }
-                .withoutSharedBackground()
                 ToolbarItem(placement: .principal) {
-                    NavBar(selection: $model.page, compact: width < 900)
+                    NavBar(selection: $model.page, compact: width < 1_020)
                 }
                 .withoutSharedBackground()
                 ToolbarItem(placement: .primaryAction) {
@@ -29,7 +40,7 @@ struct RootView: View {
             .toolbar(removing: .title)
             .inspector(isPresented: $model.isInspectorPresented) {
                 ProcessInspector()
-                    .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
+                    .inspectorColumnWidth(min: 300, ideal: Self.inspectorWidth, max: 480)
             }
             .overlay(alignment: .bottom) {
                 ToastOverlay()
@@ -45,6 +56,82 @@ struct RootView: View {
                 Text(confirmation.message)
             }
             .onAppear { model.preferences.applyAppearance() }
+            .onChange(of: model.preferences.updateSpeed) { model.monitor.interval = model.preferences.updateSpeed.interval }
+            // A hidden, minimised or fully covered window needs almost no work.
+            .background(WindowVisibility(window: $window) { model.monitor.setVisible($0) })
+            // Opening the inspector widens the window rather than crushing the page.
+            .onChange(of: model.isInspectorPresented) { makeRoomForInspector() }
+            .onChange(of: window) {
+                // Launch restores the window frame after it appears; widen after that.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { makeRoomForInspector() }
+            }
+    }
+}
+
+/// Reports whether the hosting window can be seen: on screen, not covered,
+/// not minimised, and the app not hidden. Checked when the window appears
+/// and whenever any of those can change.
+private struct WindowVisibility: NSViewRepresentable {
+    @Binding var window: NSWindow?
+    let changed: (Bool) -> Void
+
+    func makeNSView(context: Context) -> Probe {
+        let probe = Probe()
+        probe.changed = changed
+        probe.found = { window = $0 }
+        return probe
+    }
+
+    func updateNSView(_ probe: Probe, context: Context) {
+        probe.changed = changed
+    }
+
+    final class Probe: NSView {
+        var changed: ((Bool) -> Void)?
+        var found: ((NSWindow?) -> Void)?
+        private var observers: [NSObjectProtocol] = []
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            let window = self.window
+            DispatchQueue.main.async { [found] in found?(window) }
+            guard let window else { return }
+            let center = NotificationCenter.default
+            let events: [(Notification.Name, AnyObject?)] = [
+                (NSWindow.didChangeOcclusionStateNotification, window),
+                (NSWindow.didMiniaturizeNotification, window),
+                (NSWindow.didDeminiaturizeNotification, window),
+                (NSApplication.didHideNotification, NSApp),
+                (NSApplication.didUnhideNotification, NSApp),
+            ]
+            observers = events.map { name, object in
+                center.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.report() }
+                }
+            }
+            report()
+        }
+
+        private func report() {
+            guard let window else { return }
+            changed?(window.occlusionState.contains(.visible) && !window.isMiniaturized && !NSApp.isHidden)
+        }
+    }
+}
+
+extension RootView {
+    private func makeRoomForInspector() {
+        guard model.isInspectorPresented, let window, let screen = window.screen?.visibleFrame else { return }
+        let needed = Self.comfortablePageWidth + Self.inspectorWidth + 40
+        guard window.frame.width < needed else { return }
+        var frame = window.frame
+        frame.size.width = min(needed, screen.width)
+        if frame.maxX > screen.maxX {
+            frame.origin.x = max(screen.minX, screen.maxX - frame.width)
+        }
+        window.setFrame(frame, display: true, animate: true)
     }
 }
 
@@ -85,16 +172,12 @@ private struct ToastOverlay: View {
     var body: some View {
         ZStack {
             if let toast = model.toast {
-                HStack(spacing: 8) {
-                    Image(systemName: toast.kind == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(toast.kind == .success ? Tint.green.strong : Tint.red.strong)
-                    Text(toast.message)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Palette.text)
-                        .lineLimit(2)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                Text(toast.message)
+                    .font(TextStyle.body)
+                    .foregroundStyle(toast.kind == .success ? Palette.text : Level.critical.color)
+                    .lineLimit(2)
+                    .padding(.horizontal, Space.l)
+                    .padding(.vertical, 10)
                 .glassBackground()
                 .padding(.bottom, 20)
                 .transition(.move(edge: .bottom).combined(with: .opacity))

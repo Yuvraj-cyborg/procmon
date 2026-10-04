@@ -1,4 +1,4 @@
-// Where RAM is going, and who is holding it.
+// Where RAM is going, who is holding it, and which idle apps could give it back.
 
 import SwiftUI
 
@@ -7,17 +7,20 @@ struct MemoryPage: View {
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        @Bindable var model = model
         PageScroll {
             if let snapshot = model.monitor.latest {
                 let memory = snapshot.memory
-                PageHeader(title: Page.memory.title, subtitle: Page.memory.subtitle) {
-                    Tag(text: "Pressure · \(memory.pressure.label)", tint: .pressure(memory.pressure))
+                let idle = model.cleanup.idleApps(model.monitor)
+                PageHeader(title: Page.memory.title, detail: "\(memory.used.binary) of \(memory.total.binary) used") {
+                    if !idle.isEmpty {
+                        Button("Quit Idle Apps…") { model.confirmQuitIdle(idle) }
+                            .help("Apps that have used almost no CPU for a minute but hold a lot of memory")
+                    }
                 }
                 overview(memory)
-                consumers(snapshot, query: ProcessQuery(model.memoryQuery))
+                consumers(snapshot, idle: idle)
             } else {
-                PageHeader(title: Page.memory.title, subtitle: Page.memory.subtitle)
+                PageHeader(title: Page.memory.title)
             }
         }
         .onChange(of: model.searchRequest) { searchFocused = true }
@@ -25,61 +28,71 @@ struct MemoryPage: View {
 
     private func overview(_ memory: MemoryStats) -> some View {
         let history = model.monitor.memoryHistory
-        return Card {
-            CardHeader(title: "Physical memory", symbol: "memorychip", tint: .purple) {
-                Text("\(memory.used.binary) of \(memory.total.binary) used · \(memory.used.ratio(of: memory.total).percent.description)")
-                    .monospacedDigit()
+        let level = Level.pressure(memory.pressure)
+        let minutes = Int((Double(history.capacity) * model.monitor.interval.seconds / 60).rounded())
+        return VStack(alignment: .leading, spacing: Space.l) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.m) {
+                ValueText(value: memory.used.ratio(of: memory.total).percent.description)
+                Text(level == .normal ? "No memory pressure" : "\(memory.pressure.label) memory pressure: macOS is compressing and swapping to make room")
+                    .font(TextStyle.body)
+                    .foregroundStyle(level == .normal ? Palette.secondaryText : level.color)
+                    .lineLimit(2)
             }
-            Meter(segments: MemorySegments.segments(memory.breakdown, total: memory.total), height: 12)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 16, alignment: .topLeading)], alignment: .leading, spacing: 12) {
-                ForEach(MemorySegments.parts(memory.breakdown), id: \.label) { part in
-                    StatView(label: part.label, value: part.bytes.binary, dot: part.tint.strong)
+            CompositionBar(portions: memory.breakdown.portions, total: memory.total)
+            HStack(alignment: .bottom, spacing: Space.xxl) {
+                HStack(alignment: .top, spacing: Space.xxl) {
+                    StatView(label: "Available", value: memory.available.binary, hint: "\(memory.breakdown.free.binary) free")
+                    StatView(
+                        label: "Swap", value: memory.swapUsed.binary, hint: "of \(memory.swapTotal.binary)",
+                        level: memory.swapUsed > .zero && level != .normal ? .warning : .normal
+                    )
                 }
-                StatView(label: "Available", value: memory.available.binary, hint: "\(memory.breakdown.free.binary) completely free")
-                StatView(label: "Swap used", value: memory.swapUsed.binary, hint: "of \(memory.swapTotal.binary)")
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Used, last two minutes")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Palette.secondaryText)
-                Sparkline(values: history.values, capacity: history.capacity, color: Tint.purple.strong, ceiling: 1)
-                    .frame(height: 56)
-                    .padding(8)
-                    .background(Palette.well, in: .rect(cornerRadius: 10, style: .continuous))
+                .fixedSize()
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Sparkline(values: history.values, capacity: history.capacity, ceiling: 1)
+                        .frame(height: 36)
+                    Text("Used, last \(Format.count(minutes, "minute"))")
+                        .font(TextStyle.caption)
+                        .foregroundStyle(Palette.tertiaryText)
+                }
             }
         }
     }
 
-    private func consumers(_ snapshot: Snapshot, query: ProcessQuery) -> some View {
+    private func consumers(_ snapshot: Snapshot, idle: [IdleAppSuggestion]) -> some View {
         @Bindable var model = model
         @Bindable var preferences = model.preferences
-        let processes = snapshot.processes.filter(query.matches)
-        return ViewportCard {
-            HStack(spacing: 12) {
-                CardHeader(title: "Who is using memory", symbol: "person.2", tint: .blue) {
-                    Text("\(snapshot.processes.count) processes")
+        let query = ProcessQuery(model.memoryQuery)
+        let byApp = preferences.groupByApp
+        return PageSection(title: byApp ? "Apps" : "Processes", detail: idle.isEmpty ? nil : "\(Format.count(idle.count, "idle app")) holding \(idle.map(\.memory).sum().binary)") {
+            HStack(spacing: Space.s) {
+                Picker("Group", selection: $preferences.groupByApp) {
+                    Text("Apps").tag(true)
+                    Text("Processes").tag(false)
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .controlSize(.small)
                 SearchField(text: $model.memoryQuery, focus: $searchFocused)
-                Toggle("By app", isOn: $preferences.groupByApp)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Palette.secondaryText)
-                    .fixedSize()
             }
-            if preferences.groupByApp {
-                AppList(
-                    apps: snapshot.processes.groupedByApp().filter(query.matches),
-                    processes: Dictionary(snapshot.processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first }),
-                    totalMemory: snapshot.memory.total
-                )
-            } else {
-                ProcessList(
-                    processes: processes,
-                    columns: [.name, .memory, .memoryShare, .threads, .cpu, .pid, .runTime],
-                    sort: $model.memorySort,
-                    totalMemory: snapshot.memory.total
-                )
+        } content: {
+            ViewportFrame(reserve: 96) {
+                if byApp {
+                    AppList(
+                        apps: snapshot.apps.filter(query.matches),
+                        processes: Dictionary(snapshot.processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first }),
+                        totalMemory: snapshot.memory.total,
+                        idle: Dictionary(idle.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+                    )
+                } else {
+                    ProcessList(
+                        processes: snapshot.processes.filter(query.matches),
+                        columns: [.name, .memory, .memoryShare, .cpu, .threads, .pid],
+                        sort: $model.memorySort,
+                        totalMemory: snapshot.memory.total
+                    )
+                }
             }
         }
     }

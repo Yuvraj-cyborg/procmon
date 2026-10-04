@@ -6,9 +6,8 @@ import SwiftUI
 
 /// A column a process list can show. Each case knows how to title, size,
 /// sort and render itself, so pages just pick a list of columns.
-enum ProcessColumn: Hashable {
-    case name, pid, memory, memoryShare, cpu, threads, diskRead, diskWrite
-    case syscalls, contextSwitches, wakeups, received, sent, packets, runTime
+enum ProcessColumn: String, Hashable {
+    case name, pid, memory, memoryShare, cpu, threads, blocked
 
     var title: String {
         switch self {
@@ -18,15 +17,7 @@ enum ProcessColumn: Hashable {
         case .memoryShare: "Share of RAM"
         case .cpu: "CPU"
         case .threads: "Threads"
-        case .diskRead: "Disk read"
-        case .diskWrite: "Disk write"
-        case .syscalls: "Syscalls"
-        case .contextSwitches: "Switches"
-        case .wakeups: "Wakeups"
-        case .received: "Received"
-        case .sent: "Sent"
-        case .packets: "Packets"
-        case .runTime: "Running for"
+        case .blocked: "Blocked"
         }
     }
 
@@ -34,10 +25,9 @@ enum ProcessColumn: Hashable {
     var width: CGFloat {
         switch self {
         case .name: 220
-        case .memoryShare: 130
-        case .pid, .threads: 66
-        case .runTime: 92
-        default: 86
+        case .memoryShare: 120
+        case .pid, .threads, .blocked: 64
+        case .memory, .cpu: 80
         }
     }
 
@@ -45,17 +35,17 @@ enum ProcessColumn: Hashable {
     var priority: Int {
         switch self {
         case .name: 100
-        case .memory, .cpu: 90
-        case .memoryShare, .syscalls: 70
-        case .pid: 60
-        case .received, .sent, .contextSwitches: 50
-        case .wakeups, .threads: 40
-        case .diskRead, .diskWrite: 30
-        case .packets, .runTime: 20
+        case .cpu, .memory: 90
+        case .blocked: 80
+        case .threads: 60
+        case .memoryShare: 50
+        case .pid: 40
         }
     }
 
     var isNumeric: Bool { self != .name && self != .memoryShare }
+    /// Sorted alphabetically rather than by ``key(_:)``.
+    var isText: Bool { self == .name }
 
     /// The subset of `columns` that fits in `width`, in their original order.
     static func fitting(_ columns: [ProcessColumn], in width: CGFloat) -> [ProcessColumn] {
@@ -71,26 +61,18 @@ enum ProcessColumn: Hashable {
     /// Unknown values sort below every real value.
     func key(_ process: ProcessSample) -> Double {
         let unknown = -1.0
-        let activity = process.activity
-        let network = process.network
         return switch self {
         case .name: 0
         case .pid: Double(process.pid.raw)
         case .memory, .memoryShare: process.memory.map { Double($0.value) } ?? unknown
         case .cpu: process.cpu?.value ?? unknown
         case .threads: process.metrics.map { Double($0.threads) } ?? unknown
-        case .diskRead: process.metrics.map { Double($0.diskRead.bytes.value) } ?? unknown
-        case .diskWrite: process.metrics.map { Double($0.diskWrite.bytes.value) } ?? unknown
-        case .syscalls: activity?.syscalls.perSecond ?? unknown
-        case .contextSwitches: activity?.contextSwitches.perSecond ?? unknown
-        case .wakeups: activity?.idleWakeups.perSecond ?? unknown
-        case .received: network.map { Double($0.received.bytes.value) } ?? unknown
-        case .sent: network.map { Double($0.sent.bytes.value) } ?? unknown
-        case .packets: network?.packets.perSecond ?? unknown
-        case .runTime: process.runTime?.seconds ?? unknown
+        case .blocked: Double(process.blockedThreads)
         }
     }
 
+    /// What the cell shows. Zero blocked threads is left blank: only the
+    /// exceptions should catch the eye.
     func text(_ process: ProcessSample) -> String {
         let dash = "–"
         return switch self {
@@ -100,16 +82,13 @@ enum ProcessColumn: Hashable {
         case .memoryShare: ""
         case .cpu: process.cpu?.description ?? dash
         case .threads: process.metrics.map { "\($0.threads)" } ?? dash
-        case .diskRead: process.metrics.map { $0.diskRead.bytes == .zero ? "0" : $0.diskRead.description } ?? dash
-        case .diskWrite: process.metrics.map { $0.diskWrite.bytes == .zero ? "0" : $0.diskWrite.description } ?? dash
-        case .syscalls: process.activity?.syscalls.description ?? dash
-        case .contextSwitches: process.activity?.contextSwitches.description ?? dash
-        case .wakeups: process.activity?.idleWakeups.description ?? dash
-        case .received: process.network?.received.description ?? dash
-        case .sent: process.network?.sent.description ?? dash
-        case .packets: process.network?.packets.description ?? dash
-        case .runTime: process.runTime?.compact ?? dash
+        case .blocked: process.blockedThreads > 0 ? "\(process.blockedThreads)" : ""
         }
+    }
+
+    /// Only a blocked thread is worth colour in a table.
+    func level(_ process: ProcessSample) -> Level {
+        self == .blocked && process.blockedThreads > 0 ? .critical : .normal
     }
 }
 
@@ -118,7 +97,7 @@ struct ProcessSort: Equatable {
     var descending: Bool
 
     static func by(_ column: ProcessColumn) -> ProcessSort {
-        ProcessSort(column: column, descending: column != .name)
+        ProcessSort(column: column, descending: !column.isText)
     }
 
     /// Tapping the active column flips its direction; another column starts
@@ -128,9 +107,10 @@ struct ProcessSort: Equatable {
     }
 
     func apply(_ processes: [ProcessSample]) -> [ProcessSample] {
-        if column == .name {
+        if column.isText {
             return processes.sorted {
                 let order = $0.name.localizedStandardCompare($1.name)
+                if order == .orderedSame { return $0.pid < $1.pid }
                 return descending ? order == .orderedDescending : order == .orderedAscending
             }
         }
@@ -142,19 +122,18 @@ struct ProcessSort: Equatable {
     }
 }
 
-/// Application icons, looked up once per bundle.
+/// Application icons, looked up once per bundle and kept small.
 @MainActor
 enum AppIcons {
     private static var cache: [String: NSImage] = [:]
+    /// Largest size an icon is drawn at, in points.
+    private static let side: CGFloat = 40
 
     /// The outermost `.app` bundle containing `executable`.
     static func bundlePath(_ executable: String?) -> String? {
         guard let executable, let range = executable.range(of: ".app/") else { return nil }
         return String(executable[..<range.lowerBound]) + ".app"
     }
-
-    /// Largest size an icon is drawn at, in points.
-    private static let side: CGFloat = 40
 
     static func icon(for executable: String?) -> NSImage? {
         guard let bundle = bundlePath(executable) else { return nil }
@@ -165,7 +144,7 @@ enum AppIcons {
     }
 
     /// Workspace icons carry every size up to 1024 px and keep the big ones
-    /// decoded; one small bitmap is all a list row needs.
+    /// decoded; one small bitmap is all a row needs.
     private static func thumbnail(_ icon: NSImage) -> NSImage {
         let pixels = Int(side * 2)
         guard let bitmap = NSBitmapImageRep(
@@ -186,6 +165,8 @@ enum AppIcons {
     }
 }
 
+/// An app's icon, or nothing for plain executables: an icon is data here,
+/// and a placeholder would only be decoration.
 struct ProcessIcon: View {
     let executable: String?
     var size: CGFloat = 16
@@ -194,146 +175,12 @@ struct ProcessIcon: View {
         if let icon = AppIcons.icon(for: executable) {
             Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
         } else {
-            Image(systemName: "terminal")
-                .font(.system(size: size * 0.62, weight: .medium))
-                .foregroundStyle(Palette.tertiaryText)
-                .frame(width: size, height: size)
-                .background(Palette.well, in: .rect(cornerRadius: 4, style: .continuous))
+            Color.clear.frame(width: size, height: size)
         }
     }
 }
 
-/// Column titles; tapping one sorts by it.
-private struct ColumnHeader: View {
-    let columns: [ProcessColumn]
-    @Binding var sort: ProcessSort
-    var leadingInset: CGFloat = 0
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(columns, id: \.self) { column in
-                Button {
-                    sort = sort.toggled(column)
-                } label: {
-                    HStack(spacing: 3) {
-                        if column.isNumeric { Spacer(minLength: 0) }
-                        Text(column.title).lineLimit(1)
-                        if sort.column == column {
-                            Image(systemName: sort.descending ? "chevron.down" : "chevron.up")
-                                .font(.system(size: 8, weight: .bold))
-                        }
-                        if !column.isNumeric { Spacer(minLength: 0) }
-                    }
-                    .foregroundStyle(sort.column == column ? Palette.text : Palette.secondaryText)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .modifier(ColumnFrame(column: column))
-            }
-        }
-        .font(.system(size: 11, weight: .medium))
-        .padding(.leading, 10 + leadingInset)
-        .padding(.trailing, 10)
-        .frame(height: 28)
-    }
-}
-
-private struct ColumnFrame: ViewModifier {
-    let column: ProcessColumn
-
-    func body(content: Content) -> some View {
-        if column == .name {
-            content.frame(minWidth: 120, maxWidth: .infinity, alignment: .leading).padding(.trailing, 8)
-        } else {
-            content.frame(width: column.width, alignment: column.isNumeric ? .trailing : .leading)
-        }
-    }
-}
-
-/// One process, one line.
-struct ProcessRow: View {
-    let process: ProcessSample
-    let columns: [ProcessColumn]
-    let totalMemory: Bytes
-    var isSelected = false
-    var indent: CGFloat = 0
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(columns, id: \.self) { column in
-                cell(column).modifier(ColumnFrame(column: column))
-            }
-        }
-        .font(.system(size: 12))
-        .monospacedDigit()
-        .foregroundStyle(Palette.text)
-        .padding(.leading, 10 + indent)
-        .padding(.trailing, 10)
-        .frame(height: 30)
-        .background(background, in: .rect(cornerRadius: 7, style: .continuous))
-        .contentShape(.rect)
-        .onHover { hovering = $0 }
-    }
-
-    private var background: Color {
-        if isSelected { return Palette.accent.opacity(0.12) }
-        return hovering ? Palette.surfaceHover : .clear
-    }
-
-    @ViewBuilder
-    private func cell(_ column: ProcessColumn) -> some View {
-        switch column {
-        case .name:
-            HStack(spacing: 8) {
-                ProcessIcon(executable: process.executable)
-                Text(process.name).lineLimit(1).truncationMode(.middle)
-                if process.isRestricted {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Palette.tertiaryText)
-                        .help("Owned by another user. Run Procmon with sudo to see its details.")
-                }
-            }
-        case .memoryShare:
-            let share = process.memory.map { $0.ratio(of: totalMemory) }
-            HStack(spacing: 8) {
-                UsageBar(ratio: share ?? .zero, color: Tint.blue.strong)
-                Text(share.map { $0.percent.description } ?? "–")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Palette.secondaryText)
-                    .frame(width: 38, alignment: .trailing)
-            }
-            .padding(.leading, 12)
-        default:
-            Text(column.text(process))
-                .foregroundStyle(column.key(process) <= 0 ? Palette.tertiaryText : Palette.text)
-                .lineLimit(1)
-        }
-    }
-}
-
-/// Right-click actions shared by every process row.
-struct ProcessContextMenu: View {
-    let process: ProcessSample
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        Button("Inspect") { model.inspect(process.pid) }
-        if let executable = process.executable {
-            Button("Reveal in Finder") { Finder.reveal(executable) }
-        }
-        Button("Copy PID") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(process.pid.description, forType: .string)
-        }
-        Divider()
-        Button("Quit") { model.quit(process.pid, name: process.name) }
-        Button("Force Quit…", role: .destructive) { model.confirmForceQuit(process.pid, name: process.name) }
-    }
-}
-
-/// A process table with a pinned header and its own scrolling.
+/// A process table, sized to show as many columns as fit.
 struct ProcessList: View {
     let processes: [ProcessSample]
     let columns: [ProcessColumn]
@@ -343,28 +190,24 @@ struct ProcessList: View {
     @State private var width: CGFloat = 900
 
     var body: some View {
-        let visible = ProcessColumn.fitting(columns, in: width)
         let rows = sort.apply(processes)
-        VStack(spacing: 0) {
-            ColumnHeader(columns: visible, sort: $sort, leadingInset: 24)
-            Divider()
-            ScrollView {
-                LazyVStack(spacing: 1) {
-                    ForEach(rows) { process in
-                        ProcessRow(
-                            process: process, columns: visible, totalMemory: totalMemory,
-                            isSelected: model.inspectedPID == process.pid
-                        )
-                        .onTapGesture { model.inspect(process.pid) }
-                        .contextMenu { ProcessContextMenu(process: process) }
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            .overlay {
-                if rows.isEmpty {
-                    EmptyState(symbol: "magnifyingglass", title: "No matching processes", detail: "Try a different name or PID.")
-                }
+        ProcessTable(
+            rows: rows,
+            columns: ProcessColumn.fitting(columns, in: width),
+            sort: $sort,
+            totalMemory: totalMemory,
+            selected: model.inspectedPID,
+            actions: ProcessActions(
+                inspect: { model.inspect($0) },
+                quit: { model.quit($0.pid, name: $0.name) },
+                forceQuit: { model.confirmForceQuit($0.pid, name: $0.name) },
+                pause: { model.send(.pause, to: $0.pid, name: $0.name) },
+                resume: { model.send(.resume, to: $0.pid, name: $0.name) }
+            )
+        )
+        .overlay {
+            if rows.isEmpty {
+                Note("No process matches.")
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
@@ -374,55 +217,47 @@ struct ProcessList: View {
 // MARK: - Apps
 
 enum AppSortColumn: Hashable {
-    case name, processes, memory, cpu, threads
+    case name, processes, memory, cpu
 }
 
 /// Processes rolled up by application; a row expands to show its processes.
+/// Apps the clean-up rules find idle are marked in place, with a way to quit.
 struct AppList: View {
     let apps: [AppUsage]
     let processes: [PID: ProcessSample]
     let totalMemory: Bytes
+    /// Idle apps, by the PIDs of their processes.
+    var idle: [PID: IdleAppSuggestion] = [:]
     @Environment(AppModel.self) private var model
     @State private var expanded: Set<String> = []
     @State private var sort = (column: AppSortColumn.memory, descending: true)
     @State private var width: CGFloat = 900
 
-    private var showThreads: Bool { width > 720 }
     private var showShare: Bool { width > 560 }
+    private var showCount: Bool { width > 460 }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             ScrollView {
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: 0) {
                     ForEach(sorted) { app in
                         appRow(app)
                         if expanded.contains(app.name) {
                             ForEach(members(of: app)) { process in
-                                ProcessRow(
-                                    process: process, columns: memberColumns, totalMemory: totalMemory,
-                                    isSelected: model.inspectedPID == process.pid, indent: 22
-                                )
-                                .onTapGesture { model.inspect(process.pid) }
-                                .contextMenu { ProcessContextMenu(process: process) }
+                                MemberRow(process: process, totalMemory: totalMemory, isSelected: model.inspectedPID == process.pid)
                             }
                         }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, Space.xs)
             }
             .overlay {
-                if apps.isEmpty {
-                    EmptyState(symbol: "magnifyingglass", title: "No matching apps", detail: "Try a different name.")
-                }
+                if apps.isEmpty { Note("No app matches.") }
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-    }
-
-    private var memberColumns: [ProcessColumn] {
-        ProcessColumn.fitting([.name, .memory, .memoryShare, .cpu, .threads, .pid], in: width - 22)
     }
 
     private var sorted: [AppUsage] {
@@ -433,7 +268,6 @@ struct AppList: View {
             case .processes: lhs.processes.count == rhs.processes.count ? nil : lhs.processes.count < rhs.processes.count
             case .memory: lhs.memory == rhs.memory ? nil : lhs.memory < rhs.memory
             case .cpu: lhs.cpu == rhs.cpu ? nil : lhs.cpu < rhs.cpu
-            case .threads: lhs.threads == rhs.threads ? nil : lhs.threads < rhs.threads
             }
             guard let ordered else { return lhs.name < rhs.name }
             return descending ? !ordered : ordered
@@ -444,20 +278,25 @@ struct AppList: View {
         app.processes.compactMap { processes[$0] }.sorted { ($0.memory ?? .zero) > ($1.memory ?? .zero) }
     }
 
+    private func idleApp(_ app: AppUsage) -> IdleAppSuggestion? {
+        app.processes.lazy.compactMap { idle[$0] }.first
+    }
+
     private var header: some View {
         HStack(spacing: 0) {
             headerButton("App", .name).frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
-            headerButton("Processes", .processes).frame(width: 80, alignment: .trailing)
-            headerButton("Memory", .memory).frame(width: 86, alignment: .trailing)
-            if showShare { Text("Share of RAM").frame(width: 130, alignment: .leading).padding(.leading, 12) }
-            headerButton("CPU", .cpu).frame(width: 70, alignment: .trailing)
-            if showThreads { headerButton("Threads", .threads).frame(width: 70, alignment: .trailing) }
+            if showCount { headerButton("Processes", .processes).frame(width: 76, alignment: .trailing) }
+            headerButton("Memory", .memory).frame(width: 84, alignment: .trailing)
+            if showShare {
+                Text("Share of RAM").frame(width: 120, alignment: .leading).padding(.leading, Space.l)
+            }
+            headerButton("CPU", .cpu).frame(width: 64, alignment: .trailing)
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(TextStyle.caption)
         .foregroundStyle(Palette.secondaryText)
-        .padding(.leading, 34)
-        .padding(.trailing, 10)
-        .frame(height: 28)
+        .padding(.leading, 38)
+        .padding(.trailing, Space.m)
+        .frame(height: 26)
     }
 
     private func headerButton(_ title: String, _ column: AppSortColumn) -> some View {
@@ -467,7 +306,7 @@ struct AppList: View {
             HStack(spacing: 3) {
                 Text(title)
                 if sort.column == column {
-                    Image(systemName: sort.descending ? "chevron.down" : "chevron.up").font(.system(size: 8, weight: .bold))
+                    Text(sort.descending ? "↓" : "↑")
                 }
             }
             .foregroundStyle(sort.column == column ? Palette.text : Palette.secondaryText)
@@ -480,63 +319,126 @@ struct AppList: View {
         let isOpen = expanded.contains(app.name)
         let share = app.memory.ratio(of: totalMemory)
         let executable = app.processes.lazy.compactMap { processes[$0]?.executable }.first { AppIcons.bundlePath($0) != nil }
-        return AppRowButton {
-            withAnimation(.snappy(duration: 0.2)) {
-                if isOpen { expanded.remove(app.name) } else { expanded.insert(app.name) }
-            }
-        } label: {
+        let idleApp = idleApp(app)
+        return HoverRow { hovering in
             HStack(spacing: 0) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Palette.tertiaryText)
-                    .rotationEffect(.degrees(isOpen ? 90 : 0))
-                    .frame(width: 24)
-                HStack(spacing: 8) {
-                    ProcessIcon(executable: executable ?? app.processes.first.flatMap { processes[$0]?.executable })
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        if isOpen { expanded.remove(app.name) } else { expanded.insert(app.name) }
+                    }
+                } label: {
+                    GlyphImage(.chevron, size: 10)
+                        .foregroundStyle(Palette.tertiaryText)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        .frame(width: 26, height: 28)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help(isOpen ? "Hide processes" : "Show processes")
+                HStack(spacing: Space.s) {
+                    ProcessIcon(executable: executable)
                     Text(app.name).lineLimit(1).truncationMode(.middle)
+                    if let idleApp {
+                        Text("idle").font(TextStyle.caption).foregroundStyle(Palette.tertiaryText)
+                        if hovering {
+                            Button("Quit") { model.quitApp(idleApp) }
+                                .controlSize(.small)
+                                .help("Ask \(idleApp.name) to quit; it can save first")
+                        }
+                    }
                 }
                 .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
-                Text("\(app.processes.count)").foregroundStyle(Palette.secondaryText).frame(width: 80, alignment: .trailing)
-                Text(app.memory.binary).frame(width: 86, alignment: .trailing)
-                if showShare {
-                    HStack(spacing: 8) {
-                        UsageBar(ratio: share, color: Tint.blue.strong)
-                        Text(share.percent.description).font(.system(size: 11)).foregroundStyle(Palette.secondaryText)
-                            .frame(width: 38, alignment: .trailing)
-                    }
-                    .frame(width: 130).padding(.leading, 12)
+                if showCount {
+                    Text("\(app.processes.count)").foregroundStyle(Palette.secondaryText).frame(width: 76, alignment: .trailing)
                 }
-                Text(app.cpu.description).frame(width: 70, alignment: .trailing)
-                if showThreads { Text("\(app.threads)").frame(width: 70, alignment: .trailing) }
+                Text(app.memory.binary).frame(width: 84, alignment: .trailing)
+                if showShare {
+                    HStack(spacing: Space.s) {
+                        Meter(ratio: share, height: 3, warns: false)
+                        Text(share.percent.description)
+                            .font(TextStyle.caption)
+                            .foregroundStyle(Palette.secondaryText)
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                    .frame(width: 120).padding(.leading, Space.l)
+                }
+                Text(app.cpu.description).frame(width: 64, alignment: .trailing)
             }
-            .font(.system(size: 12))
+            .font(TextStyle.body)
             .monospacedDigit()
             .foregroundStyle(Palette.text)
         }
     }
 }
 
-/// A full-width row button with a hover highlight.
-private struct AppRowButton<Label: View>: View {
-    let action: () -> Void
-    @ViewBuilder var label: Label
-    @State private var hovering = false
+/// One process of an expanded app.
+private struct MemberRow: View {
+    let process: ProcessSample
+    let totalMemory: Bytes
+    let isSelected: Bool
+    @Environment(AppModel.self) private var model
 
     var body: some View {
-        Button(action: action) {
-            label
-                .padding(.leading, 10)
-                .padding(.trailing, 10)
-                .frame(height: 30)
-                .background(hovering ? Palette.surfaceHover : .clear, in: .rect(cornerRadius: 7, style: .continuous))
-                .contentShape(.rect)
+        HoverRow(isSelected: isSelected) { _ in
+            HStack(spacing: 0) {
+                Text(process.name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(Palette.secondaryText)
+                    .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
+                Text(process.pid.description).foregroundStyle(Palette.tertiaryText).frame(width: 76, alignment: .trailing)
+                Text(process.memory?.binary ?? "–").frame(width: 84, alignment: .trailing)
+                Spacer().frame(width: 136)
+                Text(process.cpu?.description ?? "–").frame(width: 64, alignment: .trailing)
+            }
+            .font(TextStyle.body)
+            .monospacedDigit()
+            .padding(.leading, 50)
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .onTapGesture { model.inspect(process.pid) }
+        .contextMenu { ProcessContextMenu(process: process) }
     }
 }
 
-/// A rounded filter box for process lists.
+/// A full-width row with a quiet hover and selection highlight.
+struct HoverRow<Content: View>: View {
+    var isSelected = false
+    @ViewBuilder var content: (Bool) -> Content
+    @State private var hovering = false
+
+    var body: some View {
+        content(hovering)
+            .padding(.trailing, Space.m)
+            .frame(height: 30)
+            .background(
+                isSelected ? Palette.accent.opacity(0.14) : hovering ? Palette.hover : .clear,
+                in: .rect(cornerRadius: 6, style: .continuous)
+            )
+            .contentShape(.rect)
+            .onHover { hovering = $0 }
+    }
+}
+
+/// Right-click actions for a process.
+struct ProcessContextMenu: View {
+    let process: ProcessSample
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button("Inspect") { model.inspect(process.pid) }
+        if let executable = process.executable {
+            Button("Show in Finder") { Finder.reveal(executable) }
+        }
+        Divider()
+        Button("Pause") { model.send(.pause, to: process.pid, name: process.name) }
+        Button("Resume") { model.send(.resume, to: process.pid, name: process.name) }
+        Divider()
+        Button("Quit") { model.quit(process.pid, name: process.name) }
+        Button("Force Quit…", role: .destructive) { model.confirmForceQuit(process.pid, name: process.name) }
+    }
+}
+
+/// A filter box for lists.
 struct SearchField: View {
     @Binding var text: String
     var prompt = "Filter by name or PID"
@@ -544,26 +446,29 @@ struct SearchField: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .medium))
+            GlyphImage(.search, size: 12)
                 .foregroundStyle(Palette.tertiaryText)
             TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(TextStyle.body)
                 .focused(focus)
                 .onExitCommand { text = "" }
             if !text.isEmpty {
                 Button {
                     text = ""
                 } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.tertiaryText)
+                    GlyphImage(.close, size: 10).foregroundStyle(Palette.tertiaryText)
                 }
                 .buttonStyle(.plain)
+                .help("Clear")
             }
         }
-        .padding(.horizontal, 10)
-        .frame(width: 210, height: 28)
-        .background(Palette.well, in: .capsule)
-        .overlay(Capsule().strokeBorder(focus.wrappedValue ? Palette.accent.opacity(0.6) : Palette.border))
+        .padding(.horizontal, 9)
+        .frame(minWidth: 150, idealWidth: 220, maxWidth: 240, minHeight: 26, maxHeight: 26)
+        .background(Palette.panel, in: .rect(cornerRadius: 7, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(focus.wrappedValue ? Palette.accent.opacity(0.7) : Palette.separator, lineWidth: 1)
+        )
     }
 }

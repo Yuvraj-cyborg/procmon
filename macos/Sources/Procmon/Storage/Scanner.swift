@@ -54,13 +54,15 @@ enum Scanner {
     /// filesystems or following symlinks. Sizes are allocated blocks, so sparse
     /// and cloned files are counted the way the disk sees them; hard links are
     /// counted once.
-    static func scan(root: String, progress: ScanProgress) throws(ScanError) -> FileTree {
+    /// `excluding` lists folders not to enter at all, such as the ones macOS
+    /// would ask about one by one without Full Disk Access.
+    static func scan(root: String, progress: ScanProgress, excluding: Set<String> = []) throws(ScanError) -> FileTree {
         var info = stat()
         // The root may itself be a symlink (e.g. /tmp); entries below it are not followed.
         guard stat(root, &info) == 0 else { throw .unreadable(errno: errno) }
         guard info.st_mode & S_IFMT == S_IFDIR else { throw .notADirectory }
 
-        let work = WorkQueue(root: Directory(name: root, parent: nil, ownSize: blocks(info)), path: root)
+        let work = WorkQueue(root: Directory(name: root, parent: nil, ownSize: blocks(info)), path: root, excluding: excluding)
         let context = Context(device: info.st_dev, progress: progress)
         let workers = max(2, Foundation.ProcessInfo.processInfo.activeProcessorCount)
         DispatchQueue.concurrentPerform(iterations: workers) { _ in
@@ -72,6 +74,7 @@ enum Scanner {
         if progress.isCancelled { throw .cancelled }
         var tree = assemble(work.directories, rootPath: root)
         tree.unreadable = context.unreadable.load(ordering: .relaxed)
+        tree.skipped = work.skipped
         return tree
     }
 
@@ -81,12 +84,16 @@ enum Scanner {
 
     // MARK: Listing one directory
 
+    /// A file kept by its folder, with its name in the folder's `names` buffer.
     fileprivate struct FileEntry {
-        let name: String
+        let nameStart: Int
+        let nameLength: Int
         let size: UInt64
     }
 
     fileprivate struct Listing {
+        /// UTF-8 names of the kept files, back to back.
+        var names: [UInt8] = []
         var files: [FileEntry] = []
         /// Files folded into one "smaller files" entry.
         var folded: (count: UInt64, size: UInt64)?
@@ -121,6 +128,9 @@ enum Scanner {
         let descriptor = dirfd(handle)
 
         var listing = Listing()
+        // Every file's name, before the folder decides which ones to keep.
+        var scratch: [UInt8] = []
+        var found: [FileEntry] = []
         var bytes: UInt64 = 0
         while let entry = readdir(handle) {
             let namePointer = UnsafeRawPointer(entry).advanced(by: nameOffset).assumingMemoryBound(to: CChar.self)
@@ -132,11 +142,11 @@ enum Scanner {
             guard fstatat(descriptor, namePointer, &info, AT_SYMLINK_NOFOLLOW) == 0 else { continue }
             let kind = info.st_mode & S_IFMT
             if kind == S_IFLNK { continue }
-            let name = String(decoding: UnsafeRawBufferPointer(start: namePointer, count: length), as: UTF8.self)
+            let name = UnsafeRawBufferPointer(start: namePointer, count: length)
             let size = blocks(info)
             if kind == S_IFDIR {
                 if info.st_dev == context.device {
-                    listing.directories.append((name, size))
+                    listing.directories.append((String(decoding: name, as: UTF8.self), size))
                 }
                 continue
             }
@@ -145,17 +155,24 @@ enum Scanner {
                 guard context.hardLinks.withLock({ $0.insert(link).inserted }) else { continue }
             }
             bytes += size
-            listing.files.append(FileEntry(name: name, size: size))
+            found.append(FileEntry(nameStart: scratch.count, nameLength: length, size: size))
+            scratch.append(contentsOf: name)
         }
-        context.progress.add(files: UInt64(listing.files.count), bytes: bytes)
+        context.progress.add(files: UInt64(found.count), bytes: bytes)
 
-        listing.files.sort { $0.size > $1.size }
-        let large = listing.files.prefix { $0.size >= alwaysKeep }.count
+        found.sort { $0.size > $1.size }
+        let large = found.prefix { $0.size >= alwaysKeep }.count
         let keep = max(filesPerFolder, large)
-        if listing.files.count > keep {
-            let tail = listing.files[keep...]
+        if found.count > keep {
+            let tail = found[keep...]
             listing.folded = (UInt64(tail.count), tail.reduce(0) { $0 + $1.size })
-            listing.files.removeSubrange(keep...)
+            found.removeSubrange(keep...)
+        }
+        // Copy only the kept names, so dropped ones do not stay in memory.
+        listing.files.reserveCapacity(found.count)
+        for file in found {
+            listing.files.append(FileEntry(nameStart: listing.names.count, nameLength: file.nameLength, size: file.size))
+            listing.names.append(contentsOf: scratch[file.nameStart..<(file.nameStart + file.nameLength)])
         }
         return listing
     }
@@ -166,12 +183,14 @@ enum Scanner {
         let name: String
         let parent: Int?
         let ownSize: UInt64
+        var names: [UInt8] = []
         var files: [FileEntry] = []
         var folded: (count: UInt64, size: UInt64)?
         var subdirectories: [Int] = []
     }
 
-    /// Rolls sizes up and lays the result out as an arena, largest first.
+    /// Rolls sizes up and lays the result out as an arena, largest first,
+    /// with each folder's children in consecutive records.
     private static func assemble(_ directories: [Directory], rootPath: String) -> FileTree {
         // Subdirectories are always recorded after their parent, so walking
         // backwards visits every child before its parent.
@@ -189,9 +208,12 @@ enum Scanner {
             counts[index] = count
         }
 
-        var tree = FileTree(rootPath: rootPath, root: FileNode(
-            name: rootPath, size: Bytes(sizes[0]), category: .folder, files: counts[0], parent: nil, children: []
-        ))
+        var tree = FileTree(rootPath: rootPath, rootSize: Bytes(sizes[0]), rootFiles: counts[0])
+        let nodes = directories.reduce(1) { $0 + $1.subdirectories.count + $1.files.count + ($1.folded == nil ? 0 : 1) }
+        let nameBytes = rootPath.utf8.count + directories.reduce(0) {
+            $0 + $1.names.count + $1.name.utf8.count + ($1.folded == nil ? 0 : 24)
+        }
+        tree.reserve(nodes: nodes, nameBytes: nameBytes)
         var queue: [(node: NodeID, directory: Int)] = [(.root, 0)]
         var cursor = 0
         while cursor < queue.count {
@@ -224,25 +246,25 @@ enum Scanner {
                 switch child {
                 case .folder(let childIndex):
                     let name = directories[childIndex].name
-                    let id = tree.append(FileNode(
+                    let id = tree.append(
                         name: name, size: Bytes(sizes[childIndex]), category: .classify(name: name, isDirectory: true),
-                        files: counts[childIndex], parent: node, children: []
-                    ))
+                        files: counts[childIndex], parent: node
+                    )
                     queue.append((id, childIndex))
                     ids.append(id)
                 case .file(let entry):
-                    ids.append(tree.append(FileNode(
-                        name: entry.name, size: Bytes(entry.size), category: .classify(name: entry.name, isDirectory: false),
-                        files: 1, parent: node, children: []
-                    )))
+                    let name = directory.names[entry.nameStart..<(entry.nameStart + entry.nameLength)]
+                    ids.append(tree.append(
+                        name: name, size: Bytes(entry.size), category: .classify(utf8: name, isDirectory: false),
+                        files: 1, parent: node
+                    ))
                 case .folded(let count, let size):
-                    ids.append(tree.append(FileNode(
-                        name: "\(count) smaller files", size: Bytes(size), category: .remainder,
-                        files: count, parent: node, children: []
-                    )))
+                    ids.append(tree.append(
+                        name: "\(count) smaller files", size: Bytes(size), category: .remainder, files: count, parent: node
+                    ))
                 }
             }
-            tree[node].children = ids
+            tree.setChildren(ids, of: node)
         }
         return tree
     }
@@ -261,11 +283,15 @@ enum Scanner {
         private let condition = NSCondition()
         private var pending: [Job]
         private var active = 0
+        private let excluding: Set<String>
         private(set) var directories: [Directory]
+        /// Folders not entered because they were excluded.
+        private(set) var skipped = 0
 
-        init(root: Directory, path: String) {
+        init(root: Directory, path: String, excluding: Set<String>) {
             directories = [root]
             pending = [Job(index: 0, path: path)]
+            self.excluding = excluding
         }
 
         func next() -> Job? {
@@ -286,13 +312,19 @@ enum Scanner {
             let separator = job.path.hasSuffix("/") ? "" : "/"
             condition.lock()
             defer { condition.unlock() }
+            directories[job.index].names = listing.names
             directories[job.index].files = listing.files
             directories[job.index].folded = listing.folded
             for (name, size) in listing.directories {
+                let path = job.path + separator + name
+                if excluding.contains(path) {
+                    skipped += 1
+                    continue
+                }
                 let index = directories.count
                 directories.append(Directory(name: name, parent: job.index, ownSize: size))
                 directories[job.index].subdirectories.append(index)
-                pending.append(Job(index: index, path: job.path + separator + name))
+                pending.append(Job(index: index, path: path))
             }
             active -= 1
             condition.broadcast()

@@ -18,23 +18,13 @@ enum Page: String, CaseIterable, Identifiable {
         }
     }
 
-    var subtitle: String {
+    var glyph: Glyph {
         switch self {
-        case .overview: "Everything at a glance"
-        case .memory: "RAM, swap and the apps holding it"
-        case .activity: "CPU load, stuck threads and noisy processes"
-        case .storage: "Volumes and what is taking up space"
-        case .devices: "Connected hardware and loaded drivers"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .overview: "square.grid.2x2"
-        case .memory: "memorychip"
-        case .activity: "waveform.path.ecg"
-        case .storage: "internaldrive"
-        case .devices: "cable.connector"
+        case .overview: .overview
+        case .memory: .memory
+        case .activity: .activity
+        case .storage: .storage
+        case .devices: .devices
         }
     }
 
@@ -64,15 +54,13 @@ struct NavBar: View {
     private func tab(_ page: Page) -> some View {
         let selected = selection == page
         return Button {
-            withAnimation(.snappy(duration: 0.3)) { selection = page }
+            withAnimation(.snappy(duration: 0.25)) { selection = page }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: page.symbol)
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(width: 16)
+                GlyphImage(page.glyph, size: 14)
                 if !compact {
                     Text(page.title)
-                        .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
+                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
                         .fixedSize()
                 }
             }
@@ -82,9 +70,7 @@ struct NavBar: View {
             .background {
                 if selected {
                     Capsule()
-                        .fill(Palette.surface.opacity(0.9))
-                        .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
-                        .overlay(Capsule().strokeBorder(Palette.border.opacity(0.8), lineWidth: 0.5))
+                        .fill(Palette.panel.opacity(0.9))
                         .matchedGeometryEffect(id: "selection", in: namespace)
                 }
             }
@@ -99,38 +85,49 @@ struct NavBar: View {
 
 /// App icon and name at the leading edge of the toolbar.
 struct BrandMark: View {
+    /// Icon only, for narrow windows.
+    var compact = false
+
     var body: some View {
         HStack(spacing: 7) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 22, height: 22)
-            Text("Procmon")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Palette.text)
+                .frame(width: 20, height: 20)
+            if !compact {
+                Text("Procmon")
+                    .font(TextStyle.emphasis)
+                    .foregroundStyle(Palette.text)
+            }
         }
         .padding(.horizontal, 6)
         .accessibilityElement(children: .combine)
     }
 }
 
-/// Appearance and list preferences.
+/// Appearance, refresh rate, list and permission settings.
 struct SettingsMenu: View {
     @Bindable var preferences: Preferences
 
     var body: some View {
         Menu {
             Picker("Appearance", selection: $preferences.appearance) {
-                ForEach(Appearance.allCases) { appearance in
-                    Label(appearance.label, systemImage: appearance.symbol).tag(appearance)
-                }
+                ForEach(Appearance.allCases) { Text($0.label).tag($0) }
             }
-            .pickerStyle(.inline)
+            Picker("Update", selection: $preferences.updateSpeed) {
+                ForEach(UpdateSpeed.allCases) { Text($0.label).tag($0) }
+            }
             Divider()
             Toggle("Group processes by app", isOn: $preferences.groupByApp)
             Toggle("Show Apple drivers", isOn: $preferences.showAppleDrivers)
+            Divider()
+            if Permissions.hasFullDiskAccess {
+                Text("Full Disk Access is on")
+            } else {
+                Button("Allow Full Disk Access…") { Permissions.openFullDiskAccessSettings() }
+            }
         } label: {
-            Image(systemName: "slider.horizontal.3")
+            Image(nsImage: Glyph.settings.templateImage(size: 15))
         }
         .menuIndicator(.hidden)
         .help("Settings")

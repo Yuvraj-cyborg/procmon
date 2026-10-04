@@ -1,4 +1,7 @@
-// A grid of everything Procmon watches. Each card opens its page.
+// A grid of everything Procmon watches. Each panel opens its page.
+//
+// Every panel has the same shape: a name, the one number it exists for, a
+// line of context, and a chart or short list anchored to the bottom edge.
 
 import SwiftUI
 
@@ -7,24 +10,36 @@ struct OverviewPage: View {
 
     var body: some View {
         PageScroll {
-            PageHeader(title: "Overview", subtitle: systemLine) {
-                LiveBadge()
-            }
+            PageHeader(title: Page.overview.title, detail: systemLine)
             if let snapshot = model.monitor.latest {
+                let monitor = model.monitor
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: Layout.spacing)], spacing: Layout.spacing) {
-                    tile(.activity) { ProcessorTile(cpu: snapshot.cpu, history: model.monitor.cpuHistory) }
+                    tile(.activity) { ProcessorTile(cpu: snapshot.cpu, history: monitor.cpuHistory) }
                     tile(.memory) { MemoryTile(memory: snapshot.memory) }
-                    tile(.activity) { AttentionTile(items: AttentionItem.all(in: snapshot)) }
-                    tile(.activity) { GraphicsTile(gpu: snapshot.gpu, history: model.monitor.gpuHistory) }
+                    tile(.activity) { AttentionTile(items: AttentionItem.all(in: snapshot, runaways: model.cleanup.runaways(monitor))) }
+                    tile(.activity) { GraphicsTile(gpu: snapshot.gpu, history: monitor.gpuHistory) }
                     tile(.activity) {
-                        NetworkTile(
-                            rates: snapshot.network,
-                            received: model.monitor.receivedHistory,
-                            sent: model.monitor.sentHistory
+                        PairTile(
+                            title: "Network", detail: "All interfaces",
+                            first: ("Received", snapshot.network?.received ?? .zero, monitor.receivedHistory),
+                            second: ("Sent", snapshot.network?.sent ?? .zero, monitor.sentHistory),
+                            floor: 1024
+                        )
+                    }
+                    tile(.activity) {
+                        PairTile(
+                            title: "Disk activity", detail: "Physical drives",
+                            first: ("Read", snapshot.disk?.read ?? .zero, monitor.diskReadHistory),
+                            second: ("Written", snapshot.disk?.written ?? .zero, monitor.diskWriteHistory),
+                            floor: 1024 * 1024
                         )
                     }
                     tile(.storage) { StorageTile(volumes: model.storage.volumes) }
-                    tile(.memory) { TopMemoryTile(apps: Array(snapshot.processes.groupedByApp().prefix(5)), snapshot: snapshot) }
+                    tile(.activity) { EnergyTile(energy: snapshot.energy, processes: snapshot.processes) }
+                    tile(action: model.reviewJunk) {
+                        ReclaimableTile(cleanup: model.cleanup, idle: model.cleanup.idleApps(monitor))
+                    }
+                    tile(.memory) { TopMemoryTile(apps: Array(snapshot.apps.prefix(5)), snapshot: snapshot) }
                     tile(.activity) { TopCPUTile(processes: snapshot.processes) }
                     tile(.devices) { DevicesTile(inventory: model.devices.inventory) }
                 }
@@ -32,6 +47,7 @@ struct OverviewPage: View {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 300)
             }
         }
+        .onAppear { model.cleanup.scanSoon(model.monitor) }
     }
 
     private var systemLine: String {
@@ -44,36 +60,71 @@ struct OverviewPage: View {
     }
 
     private func tile(_ destination: Page, @ViewBuilder content: () -> some View) -> some View {
-        Button {
-            withAnimation(.snappy(duration: 0.3)) { model.page = destination }
-        } label: {
-            Card(height: Layout.tileHeight) { content() }
+        tile(action: { withAnimation(.snappy(duration: 0.3)) { model.page = destination } }, content: content)
+    }
+
+    private func tile(action: @escaping () -> Void, @ViewBuilder content: () -> some View) -> some View {
+        Button(action: action) {
+            Panel(height: Layout.tileHeight) { content() }
         }
-        .buttonStyle(CardButtonStyle())
+        .buttonStyle(PanelButtonStyle())
     }
 }
 
-/// A dot that says the numbers are live. Deliberately still: a looping
-/// animation would redraw the window at display rate and cost real CPU.
-struct LiveBadge: View {
+/// Context under a panel's number.
+private struct Caption: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
     var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(Tint.green.strong)
-                .frame(width: 7, height: 7)
-            Text("Live")
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Palette.secondaryText)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Updating live every second")
+        Text(text)
+            .font(TextStyle.caption)
+            .monospacedDigit()
+            .foregroundStyle(Palette.secondaryText)
+            .lineLimit(1)
     }
 }
 
-/// Splits "11.4 GB" into its number and unit.
-func splitUnit(_ formatted: String) -> (value: String, unit: String?) {
-    guard let space = formatted.lastIndex(of: " ") else { return (formatted, nil) }
-    return (String(formatted[..<space]), String(formatted[formatted.index(after: space)...]))
+/// The number and its context, kept together.
+private struct Headline: View {
+    let value: String
+    var unit: String?
+    var level: Level = .normal
+    let caption: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ValueText(value: value, unit: unit, level: level)
+            Caption(caption)
+        }
+    }
+}
+
+/// A short list row: name on the left, value on the right.
+private struct ListLine: View {
+    var executable: String?
+    let name: String
+    let value: String
+    var level: Level = .normal
+
+    var body: some View {
+        HStack(spacing: Space.s) {
+            if executable != nil {
+                ProcessIcon(executable: executable, size: 14)
+            }
+            Text(name).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: Space.s)
+            Text(value)
+                .monospacedDigit()
+                .foregroundStyle(level == .normal ? Palette.secondaryText : level.color)
+                .lineLimit(1)
+        }
+        .font(TextStyle.body)
+        .foregroundStyle(Palette.text)
+    }
 }
 
 // MARK: - Tiles
@@ -83,18 +134,16 @@ private struct ProcessorTile: View {
     let history: History<Double>
 
     var body: some View {
-        CardHeader(title: "Processor", symbol: "cpu", tint: .blue) {
-            Text(String(format: "Load %.2f", cpu.load.one))
-        }
-        VStack(alignment: .leading, spacing: 2) {
-            Figure(value: String(format: "%.0f", cpu.total.value * 100), unit: "%")
-            Text("\(SystemInfo.current.coreSummary) · \(SystemInfo.current.chip)")
-                .font(.system(size: 11.5)).foregroundStyle(Palette.secondaryText).lineLimit(1)
-        }
+        PanelTitle(title: "Processor", detail: String(format: "Load %.2f", cpu.load.one))
+        Headline(
+            value: String(format: "%.0f", cpu.total.value * 100), unit: "%",
+            level: Level.load(cpu.total),
+            caption: SystemInfo.current.coreSummary
+        )
         Spacer(minLength: 0)
-        Sparkline(values: history.values, capacity: history.capacity, color: Tint.blue.strong, ceiling: 1)
-            .frame(height: 30)
-        CoreBars(cores: cpu.cores, height: 12)
+        Sparkline(values: history.values, capacity: history.capacity, ceiling: 1)
+            .frame(height: 28)
+        CoreBars(cores: cpu.cores, height: 10)
     }
 }
 
@@ -102,54 +151,28 @@ private struct MemoryTile: View {
     let memory: MemoryStats
 
     var body: some View {
-        let used = splitUnit(memory.used.binary)
-        let breakdown = memory.breakdown
-        CardHeader(title: "Memory", symbol: "memorychip", tint: .purple) {
-            Tag(text: memory.pressure.label, tint: .pressure(memory.pressure))
-        }
-        VStack(alignment: .leading, spacing: 2) {
-            Figure(value: used.value, unit: used.unit)
-            Text("of \(memory.total.binary) · \(memory.used.ratio(of: memory.total).percent.description) used")
-                .font(.system(size: 11.5)).foregroundStyle(Palette.secondaryText)
-        }
+        let used = Format.split(memory.used.binary)
+        let level = Level.pressure(memory.pressure)
+        PanelTitle(
+            title: "Memory",
+            detail: level == .normal ? nil : "\(memory.pressure.label) pressure",
+            detailLevel: level
+        )
+        Headline(value: used.value, unit: used.unit, caption: "of \(memory.total.binary) · \(memory.used.ratio(of: memory.total).percent.description) used")
         Spacer(minLength: 0)
-        Meter(segments: MemorySegments.segments(breakdown, total: memory.total), height: 8)
-        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
-            GridRow {
-                legend("App", breakdown.app, .blue)
-                legend("Wired", breakdown.wired, .orange)
-            }
-            GridRow {
-                legend("Compressed", breakdown.compressed, .purple)
-                legend("Cached", breakdown.cached, .green)
-            }
-        }
-    }
-
-    private func legend(_ label: String, _ bytes: Bytes, _ tint: Tint) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(tint.strong).frame(width: 6, height: 6)
-            Text(label).foregroundStyle(Palette.secondaryText)
-            Text(bytes.binary).foregroundStyle(Palette.text).monospacedDigit()
-        }
-        .font(.system(size: 11))
-        .lineLimit(1)
+        CompositionBar(portions: memory.breakdown.portions, total: memory.total)
     }
 }
 
-/// The Activity Monitor-style memory split, as meter segments.
-enum MemorySegments {
-    static func parts(_ breakdown: MemoryBreakdown) -> [(label: String, tint: Tint, bytes: Bytes)] {
+extension MemoryBreakdown {
+    /// The split Activity Monitor uses, largest share of meaning first.
+    var portions: [Portion] {
         [
-            ("App", .blue, breakdown.app),
-            ("Wired", .orange, breakdown.wired),
-            ("Compressed", .purple, breakdown.compressed),
-            ("Cached files", .green, breakdown.cached),
+            Portion(id: "App", value: app),
+            Portion(id: "Wired", value: wired),
+            Portion(id: "Compressed", value: compressed),
+            Portion(id: "Cached", value: cached),
         ]
-    }
-
-    static func segments(_ breakdown: MemoryBreakdown, total: Bytes) -> [MeterSegment] {
-        parts(breakdown).map { MeterSegment(id: $0.label, ratio: $0.bytes.ratio(of: total), color: $0.tint.strong) }
     }
 }
 
@@ -157,41 +180,19 @@ private struct AttentionTile: View {
     let items: [AttentionItem]
 
     var body: some View {
-        CardHeader(
-            title: "Needs attention",
-            symbol: items.isEmpty ? "checkmark.seal" : "exclamationmark.triangle",
-            tint: items.isEmpty ? .green : .red
-        ) {
-            if !items.isEmpty { Text(items.count == 1 ? "1 issue" : "\(items.count) issues") }
-        }
+        PanelTitle(title: "Needs attention")
         if items.isEmpty {
-            Spacer(minLength: 0)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("All clear")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Palette.text)
-                Text("No stuck threads, and nothing is flooding the kernel or network.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Palette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Headline(value: "None", caption: "No stuck threads or runaway processes.")
             Spacer(minLength: 0)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(items.prefix(4)) { item in
-                    HStack(spacing: 8) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(item.tint.strong)
-                            .frame(width: 20, height: 20)
-                            .background(item.tint.fill, in: .circle)
-                        Text(item.process).font(.system(size: 12)).foregroundStyle(Palette.text).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Tag(text: item.tag, tint: item.tint)
-                    }
+            let worst = items.map(\.level).contains(.critical) ? Level.critical : .warning
+            ValueText(value: "\(items.count)", unit: items.count == 1 ? "process" : "processes", level: worst)
+            Spacer(minLength: 0)
+            VStack(spacing: 5) {
+                ForEach(items.prefix(3)) { item in
+                    ListLine(name: item.name, value: item.headline, level: item.level)
                 }
             }
-            Spacer(minLength: 0)
         }
     }
 }
@@ -201,47 +202,59 @@ private struct GraphicsTile: View {
     let history: History<Double>
 
     var body: some View {
-        CardHeader(title: "Graphics", symbol: "square.stack.3d.up", tint: .pink)
-        VStack(alignment: .leading, spacing: 2) {
-            Figure(value: gpu.map { String(format: "%.0f", $0.utilization.value * 100) } ?? "–", unit: "%")
-            Text(gpu?.name ?? "No GPU statistics")
-                .font(.system(size: 11.5)).foregroundStyle(Palette.secondaryText).lineLimit(1)
-        }
+        PanelTitle(title: "Graphics")
+        Headline(
+            value: gpu.map { String(format: "%.0f", $0.utilization.value * 100) } ?? "–", unit: "%",
+            caption: gpu?.name ?? "No GPU statistics"
+        )
         Spacer(minLength: 0)
-        Sparkline(values: history.values, capacity: history.capacity, color: Tint.pink.strong, ceiling: 1)
-            .frame(height: 44)
+        Sparkline(values: history.values, capacity: history.capacity, ceiling: 1)
+            .frame(height: 40)
     }
 }
 
-private struct NetworkTile: View {
-    let rates: InterfaceRates?
-    let received: History<Double>
-    let sent: History<Double>
+/// Two rates drawn against one scale: the first dark, the second light,
+/// each named where its line is described.
+private struct PairTile: View {
+    let title: String
+    let detail: String
+    let first: (label: String, rate: Throughput, history: History<Double>)
+    let second: (label: String, rate: Throughput, history: History<Double>)
+    /// Smallest top of the scale, so noise does not fill the chart.
+    let floor: Double
+
+    private static let secondColor = Palette.tertiaryText
 
     var body: some View {
-        let down = splitUnit(rates?.received.description ?? "0 B/s")
-        let ceiling = max(received.values.max() ?? 0, sent.values.max() ?? 0, 1024)
-        CardHeader(title: "Network", symbol: "network", tint: .green) {
-            Text("All interfaces")
-        }
+        let value = Format.split(first.rate.description)
+        let ceiling = max(first.history.values.max() ?? 0, second.history.values.max() ?? 0, floor)
+        PanelTitle(title: title, detail: detail)
         VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "arrow.down").font(.system(size: 13, weight: .semibold)).foregroundStyle(Tint.green.strong)
-                Figure(value: down.value, unit: down.unit)
+            ValueText(value: value.value, unit: value.unit)
+            HStack(spacing: Space.m) {
+                LineKey(label: first.label, color: Palette.secondaryText)
+                LineKey(label: "\(second.label) \(second.rate.description)", color: Self.secondColor)
             }
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.up").foregroundStyle(Tint.orange.strong)
-                Text("\(rates?.sent.description ?? "0 B/s") sent")
-            }
-            .font(.system(size: 11.5))
-            .foregroundStyle(Palette.secondaryText)
         }
         Spacer(minLength: 0)
         ZStack {
-            Sparkline(values: sent.values, capacity: sent.capacity, color: Tint.orange.strong, ceiling: ceiling)
-            Sparkline(values: received.values, capacity: received.capacity, color: Tint.green.strong, ceiling: ceiling)
+            Sparkline(values: second.history.values, capacity: second.history.capacity, ceiling: ceiling, color: Self.secondColor)
+            Sparkline(values: first.history.values, capacity: first.history.capacity, ceiling: ceiling)
         }
         .frame(height: 40)
+    }
+}
+
+/// A short stroke in a line's colour, then its name.
+private struct LineKey: View {
+    let label: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Capsule().fill(color).frame(width: 10, height: 1.5)
+            Caption(label)
+        }
     }
 }
 
@@ -249,36 +262,73 @@ private struct StorageTile: View {
     let volumes: [Volume]
 
     var body: some View {
-        CardHeader(title: "Storage", symbol: "internaldrive", tint: .orange) {
-            Text(volumes.count == 1 ? "1 volume" : "\(volumes.count) volumes")
-        }
+        PanelTitle(title: "Storage", detail: Format.count(volumes.count, "volume"))
         if let startup = Volume.startup(in: volumes) {
-            let free = splitUnit(startup.available.decimal)
+            let free = Format.split(startup.available.decimal)
             let used = startup.used.ratio(of: startup.total)
-            VStack(alignment: .leading, spacing: 2) {
-                Figure(value: free.value, unit: "\(free.unit ?? "") free")
-                Text("of \(startup.total.decimal) on \(startup.name)")
-                    .font(.system(size: 11.5)).foregroundStyle(Palette.secondaryText).lineLimit(1)
-            }
+            Headline(value: free.value, unit: "\(free.unit ?? "") free", caption: "of \(startup.total.decimal) on \(startup.name)")
             Spacer(minLength: 0)
-            Meter(used, color: Tint.load(used).strong, height: 8)
-            VStack(alignment: .leading, spacing: 3) {
+            Meter(ratio: used, height: 4)
+            VStack(spacing: 3) {
                 ForEach(volumes.filter { $0.id != startup.id }.prefix(2)) { volume in
                     HStack {
-                        Image(systemName: volume.isRemovable ? "externaldrive" : "internaldrive")
-                        Text(volume.name).lineLimit(1)
+                        Caption(volume.name)
                         Spacer()
-                        Text("\(volume.available.decimal) free").monospacedDigit()
+                        Caption(volume.isReadOnly ? "Read-only" : "\(volume.available.decimal) free")
                     }
                 }
             }
-            .font(.system(size: 11))
-            .foregroundStyle(Palette.secondaryText)
         } else {
             Spacer()
-            Text("No volumes").foregroundStyle(Palette.secondaryText)
+            Note("No volumes found.")
             Spacer()
         }
+    }
+}
+
+private struct EnergyTile: View {
+    let energy: EnergyStats
+    let processes: [ProcessSample]
+
+    var body: some View {
+        let awake = processes.filter(\.preventsSleep)
+        let hungriest = processes.max { ($0.metrics?.power ?? 0) < ($1.metrics?.power ?? 0) }
+        let condition = energy.battery?.condition.flatMap { $0 == "Good" ? nil : $0 }
+        PanelTitle(title: "Energy", detail: condition, detailLevel: condition == nil ? .normal : .warning)
+        if let battery = energy.battery {
+            Headline(
+                value: String(format: "%.0f", battery.level.value * 100), unit: "%",
+                level: battery.level.value < 0.1 && !battery.onPower ? .critical : .normal,
+                caption: battery.summary
+            )
+        } else {
+            let power = Format.split(Format.watts(energy.processPower))
+            Headline(value: power.value, unit: power.unit, caption: "drawn by the apps Procmon can see")
+        }
+        Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 3) {
+            if let hungriest, let power = hungriest.metrics?.power, power > 0.01 {
+                Caption("Most: \(hungriest.name), \(Format.watts(power))")
+            }
+            Caption(awake.isEmpty ? "Nothing is keeping the Mac awake" : "Keeping it awake: \(awake.prefix(2).map(\.name).joined(separator: ", "))\(awake.count > 2 ? " +\(awake.count - 2)" : "")")
+        }
+    }
+}
+
+private struct ReclaimableTile: View {
+    let cleanup: CleanupModel
+    let idle: [IdleAppSuggestion]
+
+    var body: some View {
+        let found = Format.split(cleanup.junkFound.decimal)
+        let measured = cleanup.phase == .ready || cleanup.phase == .cleaning
+        PanelTitle(title: "Reclaimable", detail: cleanup.phase == .scanning ? "Measuring…" : measured ? "Review" : nil)
+        Headline(
+            value: measured ? found.value : "–", unit: measured ? found.unit : nil,
+            caption: measured ? "in caches, logs and temporary files" : "Measured shortly after launch"
+        )
+        Spacer(minLength: 0)
+        Caption(idle.isEmpty ? "No idle apps holding memory" : "\(Format.count(idle.count, "idle app")) holding \(idle.map(\.memory).sum().binary)")
     }
 }
 
@@ -287,24 +337,11 @@ private struct TopMemoryTile: View {
     let snapshot: Snapshot
 
     var body: some View {
-        CardHeader(title: "Top memory", symbol: "chart.bar.xaxis", tint: .purple) {
-            Text("by app")
-        }
-        VStack(spacing: 6) {
+        PanelTitle(title: "Top memory", detail: "by app")
+        VStack(spacing: 5) {
             ForEach(apps) { app in
                 let executable = app.processes.lazy.compactMap { pid in snapshot.processes.first { $0.pid == pid }?.executable }.first
-                HStack(spacing: 8) {
-                    ProcessIcon(executable: executable, size: 15)
-                    Text(app.name).lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 6)
-                    UsageBar(ratio: app.memory.ratio(of: snapshot.memory.total), color: Tint.purple.strong)
-                        .frame(width: 48)
-                    Text(app.memory.binary)
-                        .monospacedDigit()
-                        .frame(width: 64, alignment: .trailing)
-                }
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.text)
+                ListLine(executable: executable ?? "", name: app.name, value: app.memory.binary)
             }
         }
         Spacer(minLength: 0)
@@ -316,26 +353,15 @@ private struct TopCPUTile: View {
 
     var body: some View {
         let top = processes.filter { ($0.cpu ?? .zero) > .zero }.sorted { ($0.cpu ?? .zero) > ($1.cpu ?? .zero) }.prefix(5)
-        CardHeader(title: "Top CPU", symbol: "flame", tint: .red) {
-            Text("% of one core")
-        }
+        PanelTitle(title: "Top CPU", detail: "% of one core")
         if top.isEmpty {
             Spacer()
-            Text("Everything is idle.").font(.system(size: 12)).foregroundStyle(Palette.secondaryText)
+            Note("Everything is idle.")
             Spacer()
         } else {
-            VStack(spacing: 6) {
+            VStack(spacing: 5) {
                 ForEach(top) { process in
-                    HStack(spacing: 8) {
-                        ProcessIcon(executable: process.executable, size: 15)
-                        Text(process.name).lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 6)
-                        Text(process.cpu?.description ?? "–")
-                            .monospacedDigit()
-                            .frame(width: 52, alignment: .trailing)
-                    }
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.text)
+                    ListLine(executable: process.executable ?? "", name: process.name, value: process.cpu?.description ?? "–")
                 }
             }
             Spacer(minLength: 0)
@@ -347,104 +373,43 @@ private struct DevicesTile: View {
     let inventory: Inventory?
 
     var body: some View {
-        CardHeader(title: "Devices", symbol: "cable.connector", tint: .brown) {
-            if let inventory {
-                if inventory.problems > 0 {
-                    Tag(text: inventory.problems == 1 ? "1 needs attention" : "\(inventory.problems) need attention", tint: .red)
-                } else {
-                    Tag(text: "All working", tint: .green)
-                }
-            }
-        }
         if let inventory {
-            let classes = DeviceClass.allCases.compactMap { deviceClass -> (DeviceClass, Int)? in
-                let count = inventory.devices.count { $0.deviceClass == deviceClass && $0.status != .available }
-                return count > 0 ? (deviceClass, count) : nil
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Figure(value: "\(inventory.connected)", unit: "connected")
-                Text("\(inventory.drivers.count) drivers loaded · \(inventory.drivers.count(where: \.isThirdParty)) third-party")
-                    .font(.system(size: 11.5)).foregroundStyle(Palette.secondaryText).lineLimit(1)
-            }
+            let problems = inventory.problems
+            PanelTitle(
+                title: "Devices",
+                detail: problems > 0 ? "\(Format.count(problems, "problem"))" : nil,
+                detailLevel: problems > 0 ? .critical : .normal
+            )
+            Headline(
+                value: "\(inventory.connected)", unit: "connected",
+                caption: "\(Format.count(inventory.drivers.count, "driver")) loaded · \(inventory.drivers.count(where: \.isThirdParty)) third-party"
+            )
             Spacer(minLength: 0)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 56), spacing: 6)], alignment: .leading, spacing: 6) {
-                ForEach(classes, id: \.0) { deviceClass, count in
-                    HStack(spacing: 4) {
-                        Image(systemName: deviceClass.symbol).font(.system(size: 10))
-                        Text("\(count)").monospacedDigit()
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Palette.secondaryText)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Palette.well, in: .capsule)
-                    .help(deviceClass.label)
-                }
-            }
+            Caption(DeviceClass.allCases.compactMap { deviceClass -> String? in
+                let count = inventory.devices.count { $0.deviceClass == deviceClass && $0.status != .available }
+                return count > 0 ? "\(deviceClass.shortLabel) \(count)" : nil
+            }.joined(separator: " · "))
         } else {
+            PanelTitle(title: "Devices")
             Spacer()
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Looking for connected hardware…").font(.system(size: 12)).foregroundStyle(Palette.secondaryText)
-            }
+            Note("Looking for connected hardware…")
             Spacer()
         }
     }
 }
 
-// MARK: - Attention
-
-/// A stuck thread or a noisy process, ready to show as a row.
-struct AttentionItem: Identifiable {
-    let id: String
-    let pid: PID
-    let process: String
-    let detail: String
-    let symbol: String
-    let tint: Tint
-    let tag: String
-
-    static func all(in snapshot: Snapshot) -> [AttentionItem] {
-        let threads = snapshot.threadAlerts.map(thread)
-        let noisy = snapshot.processes
-            .filter { !$0.noiseReasons.isEmpty }
-            .sorted { $0.intensity > $1.intensity }
-            .map(noise)
-        return threads + noisy
-    }
-
-    private static func thread(_ alert: ThreadAlert) -> AttentionItem {
-        let thread = alert.threadName ?? "Thread \(alert.thread)"
-        let (symbol, tint, what): (String, Tint, String) = switch alert.kind {
-        case .blocked: ("hourglass", .orange, "in an uninterruptible wait")
-        case .stopped: ("pause.fill", .gray, "suspended")
-        case .spinning(let cpu): ("flame.fill", .red, "at \(cpu.percent) of a core")
+extension DeviceClass {
+    /// One word, for summaries.
+    var shortLabel: String {
+        switch self {
+        case .usb: "USB"
+        case .thunderbolt: "Thunderbolt"
+        case .bluetooth: "Bluetooth"
+        case .display: "Displays"
+        case .audio: "Audio"
+        case .camera: "Cameras"
+        case .network: "Network"
+        case .storage: "Storage"
         }
-        return AttentionItem(
-            id: "thread-\(alert.id)",
-            pid: alert.pid,
-            process: alert.process,
-            detail: "\(thread) \(what) for \(alert.duration.compact)",
-            symbol: symbol,
-            tint: tint,
-            tag: alert.kind.label
-        )
-    }
-
-    private static func noise(_ process: ProcessSample) -> AttentionItem {
-        let activity = process.activity ?? ActivityRates()
-        var detail = "\(activity.syscalls) syscalls · \(activity.contextSwitches) switches · \(activity.machMessages) IPC · \(activity.idleWakeups) wakeups"
-        if let network = process.network {
-            detail += " · \(network.packets) packets"
-        }
-        return AttentionItem(
-            id: "noise-\(process.pid.raw)",
-            pid: process.pid,
-            process: process.name,
-            detail: detail,
-            symbol: "bolt.fill",
-            tint: .purple,
-            tag: process.noiseReasons.first?.label ?? "Noisy"
-        )
     }
 }

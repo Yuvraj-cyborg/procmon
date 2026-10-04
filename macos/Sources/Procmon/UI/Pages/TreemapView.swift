@@ -52,13 +52,13 @@ enum TreemapLayout {
         into tiles: inout [TreemapTile],
         budget: inout Int
     ) {
-        let all = tree[parent].children
+        let all = tree.children(of: parent)
         let children = Array(all.prefix(depth == 0 ? maxTiles : maxSubtiles))
         // Children beyond the limit still take their share of the space, as
         // one box, so the drawn ones keep their true proportions.
         let omitted = all.dropFirst(children.count)
-        let rest = omitted.reduce(Bytes.zero) { $0 + tree[$1].size }
-        let rects = Treemap.squarify(children.map { Double(tree[$0].size.value) } + [Double(rest.value)], in: bounds)
+        let rest = omitted.reduce(Bytes.zero) { $0 + tree.size(of: $1) }
+        let rects = Treemap.squarify(children.map { Double(tree.size(of: $0).value) } + [Double(rest.value)], in: bounds)
         if !omitted.isEmpty, let last = rects.last, last.width >= 1, last.height >= 1 {
             tiles.append(TreemapTile(
                 id: parent, rect: last.shrunk(by: gap / 2), depth: depth, isNestedContainer: false,
@@ -163,11 +163,11 @@ struct TreemapView: View {
         .contextMenu { contextMenu }
         .overlay {
             if tiles.isEmpty {
-                EmptyState(symbol: "folder", title: "Empty folder", detail: "Nothing here takes up space.")
+                Note("Nothing in this folder takes up space.")
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Map of \(tree.title(of: current)), \(tree[current].children.count) items")
+        .accessibilityLabel("Map of \(tree.title(of: current)), \(tree.children(of: current).count) items")
     }
 
     @ViewBuilder
@@ -178,7 +178,7 @@ struct TreemapView: View {
                 Button("Open") { model.storage.focus(id) }
             }
             if let path = tree.path(of: id) {
-                Button("Reveal in Finder") { Finder.reveal(path) }
+                Button("Show in Finder") { Finder.reveal(path) }
                 Divider()
                 Button("Move to Trash…", role: .destructive) { model.confirmTrash(id) }
             }
@@ -209,8 +209,8 @@ private struct TreemapCanvas: View, Equatable {
                 }
                 if tile.isNestedContainer {
                     // Alternate shades so each level of nesting reads as its own layer.
-                    context.fill(shape, with: .color(tile.depth.isMultiple(of: 2) ? Palette.well : Palette.surface))
-                    context.stroke(shape, with: .color(Palette.border), lineWidth: 1)
+                    context.fill(shape, with: .color(tile.depth.isMultiple(of: 2) ? Palette.canvas : Palette.panel))
+                    context.stroke(shape, with: .color(Palette.separator), lineWidth: 1)
                     let strip = CGRect(x: tile.rect.minX + 7, y: tile.rect.minY + 3, width: tile.rect.width - 14, height: TreemapLayout.header - 4)
                     draw(label: tile.name, detail: tile.size, in: strip, bold: true, context: &context)
                     continue
@@ -241,13 +241,13 @@ private struct TreemapCanvas: View, Equatable {
         let detailWidth: CGFloat = detail.map { CGFloat($0.count) * 6.2 + 12 } ?? 0
         if let name = fitted(label, width: rect.width - detailWidth, perCharacter: bold ? 7.2 : 6.6) {
             context.draw(
-                Text(name).font(.system(size: 11, weight: bold ? .semibold : .medium)).foregroundStyle(Palette.text),
+                Text(name).font(.system(size: 11, weight: bold ? .semibold : .regular)).foregroundStyle(Palette.text),
                 at: CGPoint(x: rect.minX, y: rect.minY), anchor: .topLeading
             )
         }
         if let detail, rect.width > detailWidth + 40 {
             context.draw(
-                Text(detail).font(.system(size: 10.5)).foregroundStyle(Palette.secondaryText),
+                Text(detail).font(TextStyle.caption).foregroundStyle(Palette.secondaryText),
                 at: CGPoint(x: rect.maxX, y: rect.minY + 0.5), anchor: .topTrailing
             )
         }
@@ -255,6 +255,6 @@ private struct TreemapCanvas: View, Equatable {
 
     private func draw(detail: String, at point: CGPoint, width: CGFloat, context: inout GraphicsContext) {
         guard let text = fitted(detail, width: width, perCharacter: 6) else { return }
-        context.draw(Text(text).font(.system(size: 10.5)).foregroundStyle(Palette.secondaryText), at: point, anchor: .topLeading)
+        context.draw(Text(text).font(TextStyle.caption).foregroundStyle(Palette.secondaryText), at: point, anchor: .topLeading)
     }
 }

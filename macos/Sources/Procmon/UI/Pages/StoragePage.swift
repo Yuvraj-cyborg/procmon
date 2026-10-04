@@ -12,6 +12,7 @@ struct StoragePage: View {
     // The map takes whatever height the window has left; the page only
     // scrolls once the window is too short for a useful map.
     var body: some View {
+        @Bindable var model = model
         GeometryReader { proxy in
             ScrollView {
                 content.frame(height: max(proxy.size.height, 560))
@@ -21,32 +22,32 @@ struct StoragePage: View {
         // A hovered id belongs to one tree: a new scan or an edited tree
         // starts without one, since no hover-ended event arrives for it.
         .onChange(of: [storage.generation, storage.browser?.revision ?? -1]) { hovered = nil }
+        .onAppear { model.cleanup.scanSoon(model.monitor) }
+        .sheet(isPresented: $model.isReviewingJunk) {
+            JunkReview()
+        }
+        .sheet(isPresented: Binding(get: { model.diskAccessRequest != nil }, set: { if !$0 { model.diskAccessRequest = nil } })) {
+            DiskAccessQuestion()
+        }
     }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: Layout.spacing) {
-            PageHeader(title: Page.storage.title, subtitle: Page.storage.subtitle) {
-                Button {
-                    storage.scan(NSHomeDirectory())
-                } label: {
-                    Label("Scan Home", systemImage: "house")
-                }
-                Button {
-                    chooseFolder()
-                } label: {
-                    Label("Choose Folder…", systemImage: "folder")
-                }
-                .buttonStyle(.borderedProminent)
+            PageHeader(title: Page.storage.title) {
+                Button("Scan Home") { model.scan(NSHomeDirectory()) }
+                Button("Choose Folder…") { chooseFolder() }
+                    .buttonStyle(.borderedProminent)
             }
             volumes
-            Card(fills: true) {
+            ReclaimableLine()
+            Panel(padding: Space.m, fills: true) {
                 scanArea
             }
             .frame(minHeight: 300)
         }
         .frame(maxWidth: Layout.maxContentWidth, maxHeight: .infinity, alignment: .topLeading)
         .padding(.horizontal, Layout.pagePadding)
-        .padding(.top, 12)
+        .padding(.top, Space.m)
         .padding(.bottom, Layout.pagePadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -60,6 +61,8 @@ struct StoragePage: View {
         panel.message = "Choose a folder or volume to measure."
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
+            // Picking a folder in the open panel grants access to it, so
+            // there is nothing to ask first.
             MainActor.assumeIsolated { storage.scan(url.path) }
         }
     }
@@ -70,7 +73,7 @@ struct StoragePage: View {
         ScrollView(.horizontal) {
             HStack(spacing: Layout.spacing) {
                 ForEach(storage.volumes) { volume in
-                    volumeCard(volume)
+                    volumePanel(volume)
                 }
             }
         }
@@ -78,36 +81,35 @@ struct StoragePage: View {
         .scrollClipDisabled()
     }
 
-    private func volumeCard(_ volume: Volume) -> some View {
+    private func volumePanel(_ volume: Volume) -> some View {
         let used = volume.used.ratio(of: volume.total)
-        return Card {
-                    HStack(spacing: 10) {
-                        Image(systemName: volume.isRemovable ? "externaldrive" : "internaldrive")
-                            .font(.system(size: 18, weight: .light))
-                            .foregroundStyle(Palette.secondaryText)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(volume.name)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Palette.text)
-                                .lineLimit(1)
-                            Text([volume.mountPoint, volume.format].filter { !$0.isEmpty }.joined(separator: " · "))
-                                .font(.system(size: 11))
-                                .foregroundStyle(Palette.secondaryText)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        Spacer(minLength: 6)
-                        Button("Scan") { storage.scan(volume.scanPath) }
-                            .controlSize(.small)
-                            .disabled(storage.isScanning)
-                    }
-                    Meter(used, color: Tint.load(used).strong, height: 6)
-                    Text("\(volume.used.decimal) used of \(volume.total.decimal) · \(volume.available.decimal) free")
-                        .font(.system(size: 11))
-                        .monospacedDigit()
+        return Panel(padding: Space.m) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(volume.name)
+                        .font(TextStyle.emphasis)
+                        .foregroundStyle(Palette.text)
+                        .lineLimit(1)
+                    Text([volume.mountPoint, volume.format].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(TextStyle.caption)
                         .foregroundStyle(Palette.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: Space.s)
+                Button("Scan") { model.scan(volume.scanPath) }
+                    .controlSize(.small)
+                    .disabled(storage.isScanning)
+            }
+            Meter(ratio: used, height: 4)
+            Text(volume.isReadOnly
+                 ? "\(volume.total.decimal) · read-only"
+                 : "\(volume.available.decimal) free of \(volume.total.decimal)")
+                .font(TextStyle.caption)
+                .monospacedDigit()
+                .foregroundStyle(Palette.secondaryText)
         }
-        .frame(width: 300)
+        .frame(width: 280)
     }
 
     // MARK: Scan area
@@ -116,29 +118,27 @@ struct StoragePage: View {
     private var scanArea: some View {
         switch storage.phase {
         case .idle:
-            EmptyState(
-                symbol: "square.grid.3x3.square",
+            Placeholder(
                 title: "Pick a volume or folder",
-                detail: "Procmon measures every file and draws the result as boxes you can click into. "
-                    + "macOS asks before it lets any app read folders like Documents and Desktop; "
-                    + "Full Disk Access skips those questions."
+                detail: "Procmon measures every file and draws the result as boxes you can click into."
+                    + (Permissions.hasFullDiskAccess ? "" : " Without Full Disk Access, Desktop, Documents, Downloads and app data are left out.")
             ) {
-                HStack(spacing: 8) {
-                    Button("Scan Home") { storage.scan(NSHomeDirectory()) }
-                    Button("Full Disk Access…") { Finder.openFullDiskAccessSettings() }
+                Button("Scan Home") { model.scan(NSHomeDirectory()) }
+                if !Permissions.hasFullDiskAccess {
+                    Button("Allow Full Disk Access…") { Permissions.openFullDiskAccessSettings() }
                 }
             }
         case .scanning(let root, let progress):
             TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                VStack(spacing: 12) {
-                    ProgressView().controlSize(.regular)
+                VStack(spacing: Space.m) {
+                    ProgressView().controlSize(.small)
                     Text("Scanning \(root)")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(TextStyle.emphasis)
                         .foregroundStyle(Palette.text)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text("\(progress.files.formatted()) files · \(progress.bytes.decimal)")
-                        .font(.system(size: 12))
+                        .font(TextStyle.body)
                         .monospacedDigit()
                         .foregroundStyle(Palette.secondaryText)
                     Button("Cancel") { storage.cancel() }
@@ -147,7 +147,7 @@ struct StoragePage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         case .failed(let root, let message):
-            EmptyState(symbol: "exclamationmark.triangle", title: "Couldn't scan \(root)", detail: message) {
+            Placeholder(title: "Couldn't scan \(root)", detail: message) {
                 Button("Try Again") { storage.rescan() }
             }
         case .ready:
@@ -155,6 +155,210 @@ struct StoragePage: View {
                 BrowserView(browser: browser, hovered: $hovered)
             }
         }
+    }
+}
+
+/// How much the clean-up rules could free, and the way to review it.
+private struct ReclaimableLine: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let cleanup = model.cleanup
+        HStack(spacing: Space.s) {
+            switch cleanup.phase {
+            case .idle:
+                Text("Caches, logs and temporary files are measured shortly after launch.")
+                    .foregroundStyle(Palette.tertiaryText)
+            case .scanning:
+                Text("Measuring caches, logs and temporary files…")
+                    .foregroundStyle(Palette.secondaryText)
+            case .ready, .cleaning:
+                if cleanup.junkFound > .zero {
+                    Text("\(cleanup.junkFound.decimal) reclaimable")
+                        .foregroundStyle(Palette.text)
+                        .monospacedDigit()
+                    Text("in caches, logs and temporary files")
+                        .foregroundStyle(Palette.secondaryText)
+                    Button("Review…") { model.isReviewingJunk = true }
+                        .buttonStyle(.link)
+                } else {
+                    Text("No caches, logs or temporary files worth deleting.")
+                        .foregroundStyle(Palette.secondaryText)
+                }
+            }
+        }
+        .font(TextStyle.body)
+        .lineLimit(1)
+    }
+}
+
+/// The one-time question before the first scan that would reach folders
+/// macOS guards. Answering either way means it is never asked again.
+private struct DiskAccessQuestion: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.l) {
+            Text("Allow Full Disk Access once?")
+                .font(TextStyle.title)
+            Text("macOS asks separately before any app reads Desktop, Documents, Downloads, iCloud Drive or other apps' data. Full Disk Access answers all of those at once, so Procmon can measure everything without a string of prompts.")
+                .font(TextStyle.body)
+                .foregroundStyle(Palette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("In System Settings, turn on Procmon under Full Disk Access, then let it reopen. Procmon only reads sizes; it never uploads anything.")
+                .font(TextStyle.caption)
+                .foregroundStyle(Palette.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Scan Without Them") { model.answerDiskAccess(grant: false) }
+                Button("Open System Settings") { model.answerDiskAccess(grant: true) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(Space.xl)
+        .frame(width: 440)
+    }
+}
+
+/// Everything the clean-up rules found, grouped, with a checkbox per group
+/// and per item. Nothing is deleted until the button is pressed.
+private struct JunkReview: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var expanded: Set<JunkKind> = []
+
+    var body: some View {
+        let cleanup = model.cleanup
+        let selected = cleanup.selectedJunk.map(\.size).sum()
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text("Reclaimable files").font(TextStyle.title)
+                Text("Deleted for good, not moved to the Trash. Apps rebuild caches when they need them, and anything belonging to a running app is left alone.")
+                    .font(TextStyle.caption)
+                    .foregroundStyle(Palette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(Space.xl)
+            Divider()
+            Group {
+                switch cleanup.phase {
+                case .idle, .scanning:
+                    VStack(spacing: Space.s) {
+                        ProgressView().controlSize(.small)
+                        Note("Measuring…")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .ready, .cleaning:
+                    if cleanup.groups.allSatisfy({ $0.items.isEmpty }) {
+                        Note("Nothing needs cleaning.")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(cleanup.groups.filter { !$0.items.isEmpty || $0.isUnreadable }) { group in
+                                    groupRow(group)
+                                    Divider()
+                                }
+                            }
+                            .padding(.horizontal, Space.xl)
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 260)
+            Divider()
+            HStack {
+                Text(selected > .zero ? "\(selected.decimal) selected" : "Nothing selected")
+                    .font(TextStyle.body)
+                    .monospacedDigit()
+                    .foregroundStyle(Palette.secondaryText)
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(cleanup.phase == .cleaning ? "Deleting…" : "Delete \(selected.decimal)") {
+                    cleanup.clean(model.monitor) { message, kind in model.show(message, kind: kind) }
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selected == .zero || cleanup.phase != .ready)
+            }
+            .padding(Space.l)
+        }
+        .frame(width: 560, height: 520)
+    }
+
+    private func groupRow(_ group: JunkGroup) -> some View {
+        @Bindable var cleanup = model.cleanup
+        let isOn = cleanup.selectedKinds.contains(group.kind)
+        return VStack(alignment: .leading, spacing: Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                Toggle(isOn: Binding(
+                    get: { isOn },
+                    set: { on in
+                        if on { cleanup.selectedKinds.insert(group.kind) } else { cleanup.selectedKinds.remove(group.kind) }
+                    }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(group.kind.title).font(TextStyle.body).foregroundStyle(Palette.text)
+                        Text(group.isUnreadable ? "macOS didn't let Procmon look inside." : group.kind.explanation)
+                            .font(TextStyle.caption)
+                            .foregroundStyle(Palette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.checkbox)
+                .disabled(group.items.isEmpty)
+                Spacer(minLength: Space.m)
+                Text(group.size.decimal)
+                    .font(TextStyle.body)
+                    .monospacedDigit()
+                    .foregroundStyle(isOn ? Palette.text : Palette.tertiaryText)
+            }
+            if !group.items.isEmpty {
+                Button(expanded.contains(group.kind) ? "Hide \(Format.count(group.items.count, "item"))" : "Show \(Format.count(group.items.count, "item"))") {
+                    if expanded.contains(group.kind) { expanded.remove(group.kind) } else { expanded.insert(group.kind) }
+                }
+                .buttonStyle(.link)
+                .font(TextStyle.caption)
+                .padding(.leading, 22)
+            }
+            if expanded.contains(group.kind) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(group.items.sorted { $0.size > $1.size }.prefix(200)) { item in
+                        itemRow(item, enabled: isOn)
+                    }
+                }
+                .padding(.leading, 22)
+            }
+        }
+        .padding(.vertical, Space.m)
+    }
+
+    private func itemRow(_ item: JunkItem, enabled: Bool) -> some View {
+        @Bindable var cleanup = model.cleanup
+        return HStack(spacing: Space.s) {
+            Toggle(isOn: Binding(
+                get: { !cleanup.excludedItems.contains(item.path) },
+                set: { on in
+                    if on { cleanup.excludedItems.remove(item.path) } else { cleanup.excludedItems.insert(item.path) }
+                }
+            )) {
+                Text(item.name)
+                    .font(TextStyle.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+            .help(item.path)
+            Spacer(minLength: Space.s)
+            Text(item.size.decimal)
+                .font(TextStyle.caption)
+                .monospacedDigit()
+                .foregroundStyle(Palette.secondaryText)
+        }
+        .disabled(!enabled)
     }
 }
 
@@ -186,20 +390,23 @@ private struct BrowserView: View {
         }
         .frame(maxHeight: .infinity)
         footer
-        if tree.unreadable > 0 {
-            HStack(spacing: 6) {
-                Image(systemName: "lock")
-                Text("\(tree.unreadable) folders were skipped because macOS privacy settings protect them.")
-                Button("Allow Full Disk Access…") { Finder.openFullDiskAccessSettings() }
-                .buttonStyle(.link)
+        let left = Int(tree.unreadable) + tree.skipped
+        if left > 0 {
+            HStack(spacing: Space.s) {
+                GlyphImage(.lock, size: 11)
+                Text("\(Format.count(left, "protected folder")) left out.")
+                if !Permissions.hasFullDiskAccess {
+                    Button("Allow Full Disk Access…") { Permissions.openFullDiskAccessSettings() }
+                        .buttonStyle(.link)
+                }
             }
-            .font(.system(size: 11))
+            .font(TextStyle.caption)
             .foregroundStyle(Palette.secondaryText)
         }
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Space.s) {
             Breadcrumbs(tree: tree, current: browser.current)
             Spacer(minLength: 8)
             Picker("View", selection: Binding(get: { browser.mode }, set: { model.storage.setMode($0) })) {
@@ -211,14 +418,14 @@ private struct BrowserView: View {
             Button {
                 model.storage.goUp()
             } label: {
-                Image(systemName: "arrow.up")
+                GlyphImage(.arrowUp, size: 12)
             }
             .help("Up one level")
             .disabled(tree[browser.current].parent == nil || browser.mode != .map)
             Button {
                 model.storage.rescan()
             } label: {
-                Image(systemName: "arrow.clockwise")
+                GlyphImage(.refresh, size: 12)
             }
             .help("Scan again")
         }
@@ -229,14 +436,14 @@ private struct BrowserView: View {
         let focus = tree[hoveredNode ?? browser.target]
         let target = browser.target
         let path = tree.path(of: target)
-        return HStack(spacing: 12) {
+        return HStack(spacing: Space.m) {
             HStack(spacing: 6) {
-                Circle().fill(Tint.category(focus.category).strong).frame(width: 7, height: 7)
+                RoundedRectangle(cornerRadius: 1.5).fill(Tint.category(focus.category).strong).frame(width: 8, height: 8)
                 Text("\(tree.title(of: hoveredNode ?? browser.target)) · \(focus.size.decimal) · \(focus.files.formatted()) files")
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .font(.system(size: 11.5))
+            .font(TextStyle.caption)
             .monospacedDigit()
             .foregroundStyle(Palette.secondaryText)
             .frame(minWidth: 140, alignment: .leading)
@@ -246,7 +453,7 @@ private struct BrowserView: View {
                 Legend()
             }
             if let path {
-                Button("Reveal in Finder") { Finder.reveal(path) }
+                Button("Show in Finder") { Finder.reveal(path) }
                     .controlSize(.small)
             }
             if target != .root && path != nil {
@@ -269,14 +476,13 @@ private struct Breadcrumbs: View {
         HStack(spacing: 4) {
             ForEach(Array(shown.enumerated()), id: \.offset) { index, node in
                 if index > 0 {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
+                    GlyphImage(.chevron, size: 8)
                         .foregroundStyle(Palette.tertiaryText)
                 }
                 if let node {
                     Button(tree.title(of: node)) { model.storage.focus(node) }
                         .buttonStyle(.plain)
-                        .font(.system(size: 12, weight: node == current ? .semibold : .regular))
+                        .font(node == current ? TextStyle.emphasis : TextStyle.body)
                         .foregroundStyle(node == current ? Palette.text : Palette.secondaryText)
                         .lineLimit(1)
                 } else {
@@ -290,15 +496,15 @@ private struct Breadcrumbs: View {
 
 private struct Legend: View {
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Space.m) {
             ForEach(FileCategory.legend, id: \.self) { category in
-                HStack(spacing: 4) {
-                    Circle().fill(Tint.category(category).strong).frame(width: 6, height: 6)
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 1.5).fill(Tint.category(category).strong).frame(width: 8, height: 8)
                     Text(category.label)
                 }
             }
         }
-        .font(.system(size: 10.5))
+        .font(TextStyle.caption)
         .foregroundStyle(Palette.secondaryText)
         .lineLimit(1)
         .fixedSize()
@@ -321,7 +527,7 @@ private struct LargestFilesList: View {
         }
         .overlay {
             if files.isEmpty {
-                EmptyState(symbol: "doc", title: "No files", detail: "This scan did not find any files.")
+                Note("This scan found no files.")
             }
         }
     }
@@ -338,38 +544,38 @@ private struct LargestFileRow: View {
         let path = tree.path(of: id)
         let folder = path.map { ($0 as NSString).deletingLastPathComponent }
             .map { $0.hasPrefix(tree.rootPath) ? String($0.dropFirst(tree.rootPath.count)) : $0 }
-        HStack(spacing: 10) {
-            Circle().fill(Tint.category(node.category).strong).frame(width: 7, height: 7)
+        HStack(spacing: Space.s) {
+            RoundedRectangle(cornerRadius: 1.5).fill(Tint.category(node.category).strong).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
                 Text(node.name)
-                    .font(.system(size: 12.5))
+                    .font(TextStyle.body)
                     .foregroundStyle(Palette.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(folder.map { $0.isEmpty ? "/" : $0 } ?? "")
-                    .font(.system(size: 11))
+                    .font(TextStyle.caption)
                     .foregroundStyle(Palette.tertiaryText)
                     .lineLimit(1)
                     .truncationMode(.head)
             }
             Spacer(minLength: 8)
             if hovering, let path {
-                Button { Finder.reveal(path) } label: { Image(systemName: "magnifyingglass") }
+                Button { Finder.reveal(path) } label: { GlyphImage(.folder, size: 13) }
                     .buttonStyle(.borderless)
-                    .help("Reveal in Finder")
-                Button { model.confirmTrash(id) } label: { Image(systemName: "trash") }
+                    .help("Show in Finder")
+                Button { model.confirmTrash(id) } label: { GlyphImage(.trash, size: 13) }
                     .buttonStyle(.borderless)
                     .help("Move to Trash…")
             }
             Text(node.size.decimal)
-                .font(.system(size: 12, weight: .medium))
+                .font(TextStyle.body)
                 .monospacedDigit()
                 .foregroundStyle(Palette.text)
                 .frame(width: 80, alignment: .trailing)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, Space.s)
         .frame(height: 38)
-        .background(hovering ? Palette.surfaceHover : .clear, in: .rect(cornerRadius: 8, style: .continuous))
+        .background(hovering ? Palette.hover : .clear, in: .rect(cornerRadius: 6, style: .continuous))
         .contentShape(.rect)
         .onHover { hovering = $0 }
         .onTapGesture { model.storage.focus(id) }

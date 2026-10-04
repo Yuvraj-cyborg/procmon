@@ -7,7 +7,7 @@ struct LaunchOptions {
         Usage: procmon [OPTIONS]
 
         Options:
-          --page <name>    Open on a page: overview, memory, activity, storage or devices
+          --page <name>    Open on a page: overview, memory, activity, storage, devices or cleanup
           --scan <path>    Open Storage and start scanning <path>
           --inspect <pid>  Open the details panel for a process
           -h, --help       Print this help

@@ -1,134 +1,145 @@
 // Layout building blocks shared by every page.
+//
+// Pages group content with whitespace, not boxes. Panels exist only where a
+// surface carries meaning: the home grid, volumes and the storage map.
 
 import SwiftUI
 
 extension EnvironmentValues {
-    /// Height of the visible page area, so tall content (tables, the treemap)
+    /// Height of the visible page area, so tall content (tables, the map)
     /// can size itself to the window instead of a fixed number.
     @Entry var viewportHeight: CGFloat = 800
 }
 
-/// A rounded, bordered surface that groups related content.
-struct Card<Content: View>: View {
-    var padding: CGFloat = Layout.cardPadding
-    /// Fixed height, for grids and cards that hold scrolling content.
+/// A quiet surface: no border, no shadow, no icon.
+struct Panel<Content: View>: View {
+    var padding: CGFloat = Space.l
+    /// Fixed height, for grids.
     var height: CGFloat?
     /// Grow to fill the space the parent offers.
     var fills = false
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Space.m) {
             content
         }
         .padding(padding)
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: fills ? .infinity : height, alignment: .topLeading)
-        .background(Palette.surface, in: .rect(cornerRadius: Layout.cardRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: Layout.cardRadius, style: .continuous)
-                .strokeBorder(Palette.border, lineWidth: 1)
-        }
+        .background(Palette.panel, in: .rect(cornerRadius: Layout.panelRadius, style: .continuous))
     }
 }
 
-/// Title row of a card: a tinted glyph, a name and optional trailing detail.
-struct CardHeader<Trailing: View>: View {
+/// A panel's name, with an optional note on the right.
+struct PanelTitle: View {
     let title: String
-    let symbol: String
-    var tint: Tint = .gray
-    @ViewBuilder var trailing: Trailing
+    var detail: String?
+    var detailLevel: Level = .normal
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(tint.strong)
-                .frame(width: 22, height: 22)
-                .background(tint.fill, in: .rect(cornerRadius: 6, style: .continuous))
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(TextStyle.emphasis)
                 .foregroundStyle(Palette.text)
                 .lineLimit(1)
-            Spacer(minLength: 8)
-            trailing
-                .font(.system(size: 11))
-                .foregroundStyle(Palette.secondaryText)
+            Spacer(minLength: Space.s)
+            if let detail {
+                Text(detail)
+                    .font(TextStyle.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(detailLevel == .normal ? Palette.secondaryText : detailLevel.color)
+                    .lineLimit(1)
+            }
         }
     }
 }
 
-extension CardHeader where Trailing == EmptyView {
-    init(title: String, symbol: String, tint: Tint = .gray) {
-        self.init(title: title, symbol: symbol, tint: tint) { EmptyView() }
-    }
-}
-
-/// Makes a whole card tappable, with a quiet hover and press response.
-struct CardButtonStyle: ButtonStyle {
+/// Makes a whole panel tappable, answering hover and press quietly.
+struct PanelButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        CardButtonBody(configuration: configuration)
+        PanelButtonBody(configuration: configuration)
     }
 
-    private struct CardButtonBody: View {
+    private struct PanelButtonBody: View {
         let configuration: Configuration
         @State private var hovering = false
 
         var body: some View {
             configuration.label
                 .overlay {
-                    RoundedRectangle(cornerRadius: Layout.cardRadius, style: .continuous)
-                        .strokeBorder(Palette.accent.opacity(hovering ? 0.45 : 0), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: Layout.panelRadius, style: .continuous)
+                        .fill(Palette.hover.opacity(configuration.isPressed ? 0.8 : hovering ? 0.35 : 0))
+                        .allowsHitTesting(false)
                 }
-                .scaleEffect(configuration.isPressed ? 0.992 : 1)
-                .animation(.easeOut(duration: 0.15), value: hovering)
-                .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+                .animation(.easeOut(duration: 0.12), value: hovering)
                 .onHover { hovering = $0 }
-                .contentShape(.rect(cornerRadius: Layout.cardRadius))
+                .contentShape(.rect(cornerRadius: Layout.panelRadius))
         }
     }
 }
 
-/// A card as tall as the visible page, less `reserve`, for lists with their
-/// own scrolling. It reads the height inside ``PageScroll``, where it is set.
-struct ViewportCard<Content: View>: View {
-    var reserve: CGFloat = 96
-    var minimum: CGFloat = 420
-    @ViewBuilder var content: Content
-    @Environment(\.viewportHeight) private var viewportHeight
-
-    var body: some View {
-        Card(height: max(minimum, viewportHeight - reserve)) { content }
-    }
-}
-
-/// Page title with a one-line description and optional actions.
+/// Page title with facts beside it and actions on the right.
 struct PageHeader<Actions: View>: View {
     let title: String
-    let subtitle: String
+    var detail: String?
     @ViewBuilder var actions: Actions
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(Palette.text)
-                Text(subtitle)
-                    .font(.system(size: 12.5))
+        HStack(alignment: .firstTextBaseline, spacing: Space.m) {
+            Text(title)
+                .font(TextStyle.title)
+                .foregroundStyle(Palette.text)
+            if let detail {
+                Text(detail)
+                    .font(TextStyle.body)
                     .foregroundStyle(Palette.secondaryText)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            Spacer(minLength: 12)
-            HStack(spacing: 8) { actions }
+            Spacer(minLength: Space.m)
+            HStack(spacing: Space.s) { actions }
                 .controlSize(.regular)
         }
-        .padding(.bottom, 2)
     }
 }
 
 extension PageHeader where Actions == EmptyView {
-    init(title: String, subtitle: String) {
-        self.init(title: title, subtitle: subtitle) { EmptyView() }
+    init(title: String, detail: String? = nil) {
+        self.init(title: title, detail: detail) { EmptyView() }
+    }
+}
+
+/// A titled group of content. Groups are told apart by space alone.
+struct PageSection<Trailing: View, Content: View>: View {
+    let title: String
+    var detail: String?
+    @ViewBuilder var trailing: Trailing
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.m) {
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                Text(title)
+                    .font(TextStyle.emphasis)
+                    .foregroundStyle(Palette.text)
+                if let detail {
+                    Text(detail)
+                        .font(TextStyle.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(Palette.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: Space.s)
+                trailing
+            }
+            content
+        }
+    }
+}
+
+extension PageSection where Trailing == EmptyView {
+    init(title: String, detail: String? = nil, @ViewBuilder content: () -> Content) {
+        self.init(title: title, detail: detail, trailing: { EmptyView() }, content: content)
     }
 }
 
@@ -139,68 +150,79 @@ struct PageScroll<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Layout.spacing) {
+            VStack(alignment: .leading, spacing: Space.section) {
                 content
             }
             .frame(maxWidth: Layout.maxContentWidth, alignment: .topLeading)
             .padding(.horizontal, Layout.pagePadding)
-            .padding(.top, 12)
+            .padding(.top, Space.m)
             .padding(.bottom, Layout.pagePadding)
             .frame(maxWidth: .infinity)
         }
-        .scrollIndicators(.automatic)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
         .environment(\.viewportHeight, viewportHeight)
     }
 }
 
-/// A small rounded label, e.g. a status or a reason.
-struct Tag: View {
-    let text: String
-    var tint: Tint = .gray
-    var symbol: String?
+/// As tall as the visible page less `reserve`, for lists with their own
+/// scrolling. Reads the height inside ``PageScroll``, where it is set.
+struct ViewportFrame<Content: View>: View {
+    var reserve: CGFloat = 80
+    var minimum: CGFloat = 360
+    @ViewBuilder var content: Content
+    @Environment(\.viewportHeight) private var viewportHeight
 
     var body: some View {
-        HStack(spacing: 4) {
-            if let symbol {
-                Image(systemName: symbol).font(.system(size: 9, weight: .bold))
-            }
-            Text(text).lineLimit(1)
-        }
-        .font(.system(size: 11, weight: .medium))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .foregroundStyle(tint.strong)
-        .background(tint.fill, in: .capsule)
+        content.frame(height: max(minimum, viewportHeight - reserve))
     }
 }
 
-/// A labelled value, optionally with a colour key and a hint underneath.
+/// The number a panel exists for, with its unit in the secondary colour.
+struct ValueText: View {
+    let value: String
+    var unit: String?
+    var level: Level = .normal
+    var font: Font = TextStyle.hero
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: unit == "%" ? 1 : 3) {
+            Text(value)
+                .font(font)
+                .foregroundStyle(level.color)
+            if let unit {
+                Text(unit)
+                    .font(TextStyle.body)
+                    .foregroundStyle(Palette.secondaryText)
+            }
+        }
+        .monospacedDigit()
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+    }
+}
+
+/// A small label over a value, with an optional note beneath.
 struct StatView: View {
     let label: String
     let value: String
     var hint: String?
-    var dot: Color?
+    var level: Level = .normal
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
-                if let dot {
-                    Circle().fill(dot).frame(width: 7, height: 7)
-                }
-                Text(label)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Palette.secondaryText)
-                    .lineLimit(1)
-            }
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(TextStyle.caption)
+                .foregroundStyle(Palette.secondaryText)
+                .lineLimit(1)
             Text(value)
-                .font(.system(size: 15, weight: .medium))
+                .font(TextStyle.body)
                 .monospacedDigit()
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(level.color)
                 .lineLimit(1)
             if let hint {
                 Text(hint)
-                    .font(.system(size: 11))
+                    .font(TextStyle.caption)
+                    .monospacedDigit()
                     .foregroundStyle(Palette.tertiaryText)
                     .lineLimit(1)
             }
@@ -208,73 +230,87 @@ struct StatView: View {
     }
 }
 
-/// The headline number of a card, e.g. "42 %".
-struct Figure: View {
-    let value: String
-    var unit: String?
-    var size: CGFloat = 30
+/// Plain secondary text for empty and waiting states.
+struct Note: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(value)
-                .font(.system(size: size, weight: .semibold))
-                .tracking(-0.4)
-            if let unit {
-                Text(unit)
-                    .font(.system(size: size * 0.46, weight: .medium))
-                    .foregroundStyle(Palette.secondaryText)
-            }
-        }
-        .monospacedDigit()
-        .foregroundStyle(Palette.text)
-        .lineLimit(1)
-        .minimumScaleFactor(0.6)
-        .contentTransition(.numericText())
+        Text(text)
+            .font(TextStyle.body)
+            .foregroundStyle(Palette.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
-/// Centered glyph with a title and an explanation, for empty or waiting states.
-struct EmptyState<Actions: View>: View {
-    let symbol: String
+/// What an empty area is for, and how to fill it. Centred in its space.
+struct Placeholder<Actions: View>: View {
     let title: String
     let detail: String
     @ViewBuilder var actions: Actions
 
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(Palette.tertiaryText)
+        VStack(spacing: Space.s) {
             Text(title)
-                .font(.system(size: 14, weight: .medium))
+                .font(TextStyle.title)
                 .foregroundStyle(Palette.text)
             Text(detail)
-                .font(.system(size: 12))
+                .font(TextStyle.body)
                 .foregroundStyle(Palette.secondaryText)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
-            actions.padding(.top, 4)
+                .frame(maxWidth: 420)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: Space.s) { actions }
+                .padding(.top, Space.s)
         }
+        .padding(Space.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(32)
     }
 }
 
-extension EmptyState where Actions == EmptyView {
-    init(symbol: String, title: String, detail: String) {
-        self.init(symbol: symbol, title: title, detail: detail) { EmptyView() }
+/// A button showing a glyph, optionally with a title.
+struct GlyphButton: View {
+    let glyph: Glyph
+    var title: String?
+    let help: String
+    var role: ButtonRole?
+    let action: () -> Void
+
+    init(_ glyph: Glyph, title: String? = nil, help: String, role: ButtonRole? = nil, action: @escaping () -> Void) {
+        self.glyph = glyph
+        self.title = title
+        self.help = help
+        self.role = role
+        self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) {
+            HStack(spacing: 6) {
+                GlyphImage(glyph, size: 13)
+                if let title {
+                    Text(title)
+                }
+            }
+        }
+        .help(help)
+        .accessibilityLabel(title ?? help)
     }
 }
 
 extension View {
-    /// Liquid Glass on macOS 26, a plain material before it.
+    /// Liquid Glass on macOS 26, a plain material before it. For the
+    /// navigation layer and transient overlays only.
     @ViewBuilder
     func glassBackground(in shape: some Shape = .capsule, interactive: Bool = false) -> some View {
         if #available(macOS 26.0, *) {
             glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
         } else {
             background(.regularMaterial, in: shape)
-                .overlay(shape.stroke(Palette.border, lineWidth: 0.5))
+                .overlay(shape.stroke(Palette.separator, lineWidth: 0.5))
         }
     }
 }

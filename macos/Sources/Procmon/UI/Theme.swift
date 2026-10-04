@@ -1,5 +1,10 @@
-// Procmon's palette: warm paper neutrals with a soft indigo accent, in light
-// and dark variants that follow the window's appearance.
+// Procmon's design tokens.
+//
+// The rules they encode (see the design notes in the README's history):
+// - Grayscale by default; the system accent marks what is interactive or
+//   selected; green, amber and red only mean state, and always with words.
+// - One family, four sizes (11, 13, 15, 22), two weights; numbers tabular.
+// - Space on a 4-point scale; groups sit twice as far apart as their parts.
 
 import AppKit
 import SwiftUI
@@ -26,62 +31,111 @@ extension Color {
 }
 
 enum Palette {
-    /// Window background behind the cards.
-    static let canvas = Color(light: 0xF6F5F2, dark: 0x141413)
-    static let surface = Color(light: 0xFFFFFF, dark: 0x1E1E1D)
-    static let surfaceHover = Color(light: 0xFAFAF8, dark: 0x252524)
-    /// Recessed wells inside a card, e.g. behind charts.
-    static let well = Color(light: 0xF6F5F2, dark: 0x191918)
-    static let border = Color(light: 0xE8E7E3, dark: 0x2B2B2A)
-    static let track = Color(light: 0xECEBE7, dark: 0x2F2F2E)
-    static let text = Color(light: 0x2F2E2A, dark: 0xE8E7E4)
-    static let secondaryText = Color(light: 0x7A7873, dark: 0x9C9B96)
-    static let tertiaryText = Color(light: 0xA9A7A1, dark: 0x6C6B67)
-    static let accent = Color(light: 0x5E6AD2, dark: 0x8C95EE)
+    /// Behind everything.
+    static let canvas = Color(light: 0xF4F4F3, dark: 0x1B1B1C)
+    /// Panels on the home grid and sheets.
+    static let panel = Color(light: 0xFFFFFF, dark: 0x252526)
+    /// Row hover and pressed states.
+    static let hover = Color(nsColor: .quaternaryLabelColor).opacity(0.5)
+    static let text = Color(nsColor: .labelColor)
+    static let secondaryText = Color(nsColor: .secondaryLabelColor)
+    static let tertiaryText = Color(nsColor: .tertiaryLabelColor)
+    static let separator = Color(nsColor: .separatorColor)
+    /// The empty part of bars and meters.
+    static let track = Color(nsColor: .quaternaryLabelColor)
+    static let accent = Color.accentColor
 }
 
-/// A soft categorical colour, used for treemap tiles, legends and tags.
+/// What a value means. Normal things are not coloured.
+enum Level: Sendable {
+    case normal, warning, critical
+
+    var color: Color {
+        switch self {
+        case .normal: Palette.text
+        case .warning: Color(nsColor: .systemOrange)
+        case .critical: Color(nsColor: .systemRed)
+        }
+    }
+
+    static func load(_ ratio: Ratio) -> Level {
+        switch ratio.value {
+        case 0.9...: .critical
+        case 0.75...: .warning
+        default: .normal
+        }
+    }
+
+    static func pressure(_ pressure: MemoryPressure) -> Level {
+        switch pressure {
+        case .critical: .critical
+        case .warning: .warning
+        case .normal, .unknown: .normal
+        }
+    }
+}
+
+enum TextStyle {
+    /// Column headers, labels, context under a value.
+    static let caption = Font.system(size: 11)
+    static let body = Font.system(size: 13)
+    static let emphasis = Font.system(size: 13, weight: .semibold)
+    /// Page and section titles.
+    static let title = Font.system(size: 15, weight: .semibold)
+    /// At most one per panel: the number the panel exists for.
+    static let hero = Font.system(size: 22, weight: .semibold)
+    static let code = Font.system(size: 11, design: .monospaced)
+}
+
+enum Space {
+    static let xs: CGFloat = 4
+    static let s: CGFloat = 8
+    static let m: CGFloat = 12
+    static let l: CGFloat = 16
+    static let xl: CGFloat = 20
+    static let xxl: CGFloat = 24
+    static let section: CGFloat = 32
+}
+
+enum Layout {
+    static let pagePadding: CGFloat = 20
+    static let maxContentWidth: CGFloat = 1440
+    static let spacing: CGFloat = 12
+    static let panelRadius: CGFloat = 10
+    /// Home panels share a height so the grid stays tidy.
+    static let tileHeight: CGFloat = 184
+}
+
+/// File types in the storage map: the one place colour means category,
+/// because there the colours are the data.
 enum Tint: CaseIterable {
     case blue, green, orange, purple, pink, yellow, red, brown, gray
 
-    /// Pastel fill, readable with the theme text on top.
     var fill: Color {
         switch self {
-        case .blue: Color(light: 0xDCE8F5, dark: 0x243447)
-        case .green: Color(light: 0xDCEEDF, dark: 0x243B31)
-        case .orange: Color(light: 0xFAE3CF, dark: 0x46301F)
-        case .purple: Color(light: 0xE9E0F3, dark: 0x362B47)
-        case .pink: Color(light: 0xF6E0EA, dark: 0x44283A)
-        case .yellow: Color(light: 0xFBEFCB, dark: 0x453A1C)
-        case .red: Color(light: 0xFBE0DD, dark: 0x4A2725)
-        case .brown: Color(light: 0xEEE3DA, dark: 0x3B2F27)
-        case .gray: Color(light: 0xEDECE9, dark: 0x2C2C2B)
+        case .blue: Color(light: 0xDDE6F0, dark: 0x2A3440)
+        case .green: Color(light: 0xDDEBE2, dark: 0x2A3A31)
+        case .orange: Color(light: 0xF2E3D6, dark: 0x40322A)
+        case .purple: Color(light: 0xE6E0EE, dark: 0x352F40)
+        case .pink: Color(light: 0xF0E0E7, dark: 0x3F2E36)
+        case .yellow: Color(light: 0xF1EAD2, dark: 0x3D3726)
+        case .red: Color(light: 0xF1DEDC, dark: 0x422D2B)
+        case .brown: Color(light: 0xEAE3DC, dark: 0x3A322C)
+        case .gray: Color(light: 0xEAEAE8, dark: 0x303031)
         }
     }
 
-    /// Saturated variant for strokes, dots and bar fills.
     var strong: Color {
         switch self {
-        case .blue: Color(light: 0x4A8FC2, dark: 0x5FA6D6)
-        case .green: Color(light: 0x3E9E8C, dark: 0x55B8A5)
-        case .orange: Color(light: 0xDB7E40, dark: 0xE8955C)
-        case .purple: Color(light: 0x8C5FCC, dark: 0xA682E0)
-        case .pink: Color(light: 0xCC5E93, dark: 0xDD78A9)
-        case .yellow: Color(light: 0xC9952E, dark: 0xDDAE4E)
-        case .red: Color(light: 0xD65850, dark: 0xE8706A)
-        case .brown: Color(light: 0x98705D, dark: 0xB08674)
-        case .gray: Color(light: 0x93918C, dark: 0x8F8E8A)
-        }
-    }
-}
-
-extension Tint {
-    /// Colour for a load level: calm until it is high.
-    static func load(_ ratio: Ratio) -> Tint {
-        switch ratio.value {
-        case 0.85...: .red
-        case 0.6...: .orange
-        default: .blue
+        case .blue: Color(light: 0x5B87B5, dark: 0x7FA6CF)
+        case .green: Color(light: 0x5A9275, dark: 0x7DB597)
+        case .orange: Color(light: 0xC07C4E, dark: 0xD99A6E)
+        case .purple: Color(light: 0x8570AE, dark: 0xA692CC)
+        case .pink: Color(light: 0xB56F8E, dark: 0xD08FAB)
+        case .yellow: Color(light: 0xB09448, dark: 0xCDB26A)
+        case .red: Color(light: 0xC06A61, dark: 0xDA8B82)
+        case .brown: Color(light: 0x93765F, dark: 0xB3957E)
+        case .gray: Color(light: 0x8E8D89, dark: 0x8E8D89)
         }
     }
 
@@ -98,23 +152,4 @@ extension Tint {
         case .remainder, .other: .gray
         }
     }
-
-    static func pressure(_ pressure: MemoryPressure) -> Tint {
-        switch pressure {
-        case .normal: .green
-        case .warning: .orange
-        case .critical: .red
-        case .unknown: .gray
-        }
-    }
-}
-
-enum Layout {
-    static let pagePadding: CGFloat = 24
-    static let maxContentWidth: CGFloat = 1440
-    static let spacing: CGFloat = 14
-    static let cardRadius: CGFloat = 14
-    static let cardPadding: CGFloat = 16
-    /// Overview cards share a height so the grid stays tidy.
-    static let tileHeight: CGFloat = 196
 }

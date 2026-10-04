@@ -10,70 +10,31 @@ struct DevicesPage: View {
 
     var body: some View {
         PageScroll {
-            PageHeader(title: Page.devices.title, subtitle: Page.devices.subtitle) {
-                Button {
-                    model.devices.refresh()
-                } label: {
-                    if model.devices.isLoading {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.mini)
-                            Text("Refreshing")
-                        }
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
+            PageHeader(title: Page.devices.title, detail: model.devices.inventory.map(summary)) {
+                if model.devices.isLoading {
+                    ProgressView().controlSize(.small)
                 }
-                .disabled(model.devices.isLoading)
+                GlyphButton(.refresh, title: "Refresh", help: "Look for hardware again") { model.devices.refresh() }
+                    .disabled(model.devices.isLoading)
             }
             if let inventory = model.devices.inventory {
-                summary(inventory)
                 problems(inventory)
                 groups(inventory)
-                DriversCard(drivers: inventory.drivers, showApple: Bindable(model.preferences).showAppleDrivers)
+                DriverSection(drivers: inventory.drivers, showApple: Bindable(model.preferences).showAppleDrivers)
                 if !inventory.errors.isEmpty {
-                    Text("Could not read: \(inventory.errors.joined(separator: "; "))")
-                        .font(.system(size: 11))
+                    Text("Couldn't read: \(inventory.errors.joined(separator: "; "))")
+                        .font(TextStyle.caption)
                         .foregroundStyle(Palette.tertiaryText)
                 }
             } else {
-                Card {
-                    HStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
-                        Text("Asking the system for connected hardware…")
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(Palette.secondaryText)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 120)
-                }
+                Note("Asking the system for connected hardware…")
             }
         }
     }
 
-    private func summary(_ inventory: Inventory) -> some View {
+    private func summary(_ inventory: Inventory) -> String {
         let thirdParty = inventory.drivers.count(where: \.isThirdParty)
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: Layout.spacing)], spacing: Layout.spacing) {
-            summaryCard("Connected devices", "\(inventory.connected)", symbol: "cable.connector", tint: .blue)
-            summaryCard("Drivers loaded", "\(inventory.drivers.count)", symbol: "puzzlepiece.extension", tint: .purple)
-            summaryCard("Third-party drivers", "\(thirdParty)", symbol: "shippingbox", tint: .orange)
-            summaryCard("Problems", "\(inventory.problems)", symbol: inventory.problems == 0 ? "checkmark.seal" : "exclamationmark.triangle",
-                        tint: inventory.problems == 0 ? .green : .red)
-        }
-    }
-
-    private func summaryCard(_ label: String, _ value: String, symbol: String, tint: Tint) -> some View {
-        Card {
-            HStack(spacing: 12) {
-                Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(tint.strong)
-                    .frame(width: 34, height: 34)
-                    .background(tint.fill, in: .rect(cornerRadius: 9, style: .continuous))
-                VStack(alignment: .leading, spacing: 0) {
-                    Figure(value: value, size: 22)
-                    Text(label).font(.system(size: 11.5)).foregroundStyle(Palette.secondaryText).lineLimit(1)
-                }
-            }
-        }
+        return "\(inventory.connected) connected · \(Format.count(inventory.drivers.count, "driver")), \(thirdParty) third-party"
     }
 
     @ViewBuilder
@@ -81,9 +42,8 @@ struct DevicesPage: View {
         let faulty = inventory.devices.filter { $0.status == .faulty }
         let stuck = inventory.drivers.filter { !$0.state.isHealthy }
         if !faulty.isEmpty || !stuck.isEmpty {
-            Card {
-                CardHeader(title: "Needs attention", symbol: "exclamationmark.triangle", tint: .red)
-                VStack(spacing: 2) {
+            PageSection(title: "Problems", detail: "\(faulty.count + stuck.count)") {
+                VStack(spacing: 0) {
                     ForEach(faulty) { DeviceRow(device: $0) }
                     ForEach(stuck) { DriverRow(driver: $0) }
                 }
@@ -99,20 +59,20 @@ struct DevicesPage: View {
                 let (left, right) = (lhs.1.count { $0.status != .available }, rhs.1.count { $0.status != .available })
                 return left == right ? lhs.0 < rhs.0 : left > right
             }
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Layout.spacing, alignment: .top)], alignment: .leading, spacing: Layout.spacing) {
+        return LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 320), spacing: Space.section, alignment: .top)],
+            alignment: .leading, spacing: Space.section
+        ) {
             ForEach(groups, id: \.0) { deviceClass, devices in
                 let present = devices.filter { $0.status != .available }
                 let absent = devices.filter { $0.status == .available }
-                Card {
-                    CardHeader(title: deviceClass.label, symbol: deviceClass.symbol, tint: .blue) {
-                        Text("\(present.count) of \(devices.count)")
-                    }
-                    VStack(spacing: 2) {
+                PageSection(title: deviceClass.label, detail: "\(present.count) of \(devices.count)") {
+                    VStack(spacing: 0) {
                         ForEach(present + absent.prefix(Self.absentShown)) { DeviceRow(device: $0) }
                     }
                     if absent.count > Self.absentShown {
                         Text("and \(absent.count - Self.absentShown) more not connected")
-                            .font(.system(size: 11))
+                            .font(TextStyle.caption)
                             .foregroundStyle(Palette.tertiaryText)
                     }
                 }
@@ -129,15 +89,10 @@ private struct DeviceRow: View {
         if let driver = device.driver {
             detail += (detail.isEmpty ? "" : " · ") + "driver \(driver)"
         }
-        return ItemRow(symbol: device.deviceClass.symbol, title: device.name, detail: detail, dimmed: device.status == .available) {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(device.status == .connected ? Tint.green.strong : device.status == .faulty ? Tint.red.strong : Palette.tertiaryText)
-                    .frame(width: 7, height: 7)
-                Text(device.status.label)
-            }
-            .font(.system(size: 11))
-            .foregroundStyle(Palette.secondaryText)
+        let level: Level = device.status == .faulty ? .critical : .normal
+        return ItemRow(title: device.name, detail: detail, dimmed: device.status == .available) {
+            Text(device.status.label)
+                .foregroundStyle(level == .normal ? Palette.secondaryText : level.color)
         }
     }
 }
@@ -148,41 +103,46 @@ private struct DriverRow: View {
     var body: some View {
         var detail = driver.kind.label
         if driver.name != nil { detail += " · \(driver.bundleID)" }
-        if let version = driver.version { detail += " · v\(version)" }
-        return ItemRow(symbol: "puzzlepiece.extension", title: driver.displayName, detail: detail, dimmed: false) {
-            Tag(text: driver.state.label, tint: driver.state.isHealthy ? .green : .orange)
+        if let version = driver.version { detail += " · \(version)" }
+        return ItemRow(title: driver.displayName, detail: detail, dimmed: false) {
+            Text(driver.state.label)
+                .foregroundStyle(driver.state.isHealthy ? Palette.tertiaryText : Level.warning.color)
         }
     }
 }
 
 private struct ItemRow<Trailing: View>: View {
-    let symbol: String
     let title: String
     let detail: String
     let dimmed: Bool
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.secondaryText)
-                .frame(width: 18)
+        HStack(alignment: .firstTextBaseline, spacing: Space.s) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 12.5)).foregroundStyle(Palette.text).lineLimit(1)
+                Text(title)
+                    .font(TextStyle.body)
+                    .foregroundStyle(dimmed ? Palette.secondaryText : Palette.text)
+                    .lineLimit(1)
                 if !detail.isEmpty {
-                    Text(detail).font(.system(size: 11)).foregroundStyle(Palette.secondaryText).lineLimit(1)
+                    Text(detail)
+                        .font(TextStyle.caption)
+                        .foregroundStyle(dimmed ? Palette.tertiaryText : Palette.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
-            Spacer(minLength: 8)
-            trailing
+            Spacer(minLength: Space.s)
+            trailing.font(TextStyle.caption)
         }
-        .padding(.vertical, 5)
-        .opacity(dimmed ? 0.55 : 1)
+        .padding(.vertical, 6)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Palette.separator).frame(height: 0.5).opacity(0.6)
+        }
     }
 }
 
-private struct DriversCard: View {
+private struct DriverSection: View {
     let drivers: [Driver]
     @Binding var showApple: Bool
 
@@ -193,19 +153,16 @@ private struct DriversCard: View {
                 (lhs.state.isHealthy ? 1 : 0, lhs.isThirdParty ? 0 : 1, lhs.displayName.lowercased())
                     < (rhs.state.isHealthy ? 1 : 0, rhs.isThirdParty ? 0 : 1, rhs.displayName.lowercased())
             }
-        Card {
-            CardHeader(title: "Drivers & extensions", symbol: "puzzlepiece.extension", tint: .purple) {
-                Toggle("Include Apple", isOn: $showApple)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .fixedSize()
-            }
+        PageSection(title: "Drivers and extensions", detail: "\(shown.count)") {
+            Toggle("Include Apple's", isOn: $showApple)
+                .toggleStyle(.checkbox)
+                .font(TextStyle.caption)
+                .fixedSize()
+        } content: {
             if shown.isEmpty {
-                Text("No third-party drivers are loaded.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.secondaryText)
+                Note("No third-party drivers are loaded.")
             } else {
-                LazyVStack(spacing: 2) {
+                LazyVStack(spacing: 0) {
                     ForEach(shown) { DriverRow(driver: $0) }
                 }
             }

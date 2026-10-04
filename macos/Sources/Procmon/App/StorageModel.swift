@@ -85,7 +85,10 @@ final class StorageModel {
         scanTask = Task {
             let result = await offMain {
                 Result { () throws(ScanError) -> (FileTree, [NodeID]) in
-                    let tree = try Scanner.scan(root: root, progress: progress)
+                    // Without Full Disk Access, macOS would stop the scan to ask
+                    // about each protected folder; leave those out instead.
+                    let excluded = Permissions.hasFullDiskAccess ? [] : Permissions.promptingFolders()
+                    let tree = try Scanner.scan(root: root, progress: progress, excluding: excluded)
                     return (tree, tree.largestFiles(limit: Self.largestLimit))
                 }
             }
