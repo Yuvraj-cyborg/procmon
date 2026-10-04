@@ -1,6 +1,6 @@
 # Procmon
 
-A small system monitor. On macOS it is a native Swift app of under 2 MB. On Linux and Windows it is written in Rust with [GPUI](https://github.com/zed-industries/zed).
+A small system monitor for your computer.
 
 <p align="center"><img src="docs/image.png" alt="Procmon"></p>
 
@@ -13,11 +13,9 @@ A small system monitor. On macOS it is a native Swift app of under 2 MB. On Linu
 - **Storage:** what is filling your disk, shown as boxes you can click into. Old caches, logs and temporary files can be reviewed and deleted from here.
 - **Devices:** connected hardware, and whether its drivers are running.
 
-Simple rules, not AI, decide what is safe to clean, and Procmon always asks first.
-
 ## Install
 
-Get the latest version from [Releases](https://github.com/Yuvraj-cyborg/procmon/releases).
+Download it from [proc.yuvich.com](https://proc.yuvich.com).
 
 - **macOS 15 or later:** open the `.dmg` and drag Procmon into Applications.
 - **Linux:** unpack the `.tar.xz` and run `./install.sh`, or install the `.deb`.
@@ -34,14 +32,6 @@ make install   # macOS: build Procmon.app and copy it to /Applications
 make dmg       # macOS: build a .dmg in dist/
 make linux     # Linux: build a .tar.xz in dist/
 ```
-
-## Shortcuts on macOS
-
-| Keys | Action |
-| --- | --- |
-| ⌘1 – ⌘5 | Switch page |
-| ⌘F | Search processes |
-| ⌘R | Rescan or refresh |
 
 ## Good to know
 
