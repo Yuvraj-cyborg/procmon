@@ -111,7 +111,7 @@ jobs:
         with:
           name: procmon-linux-${{ matrix.arch }}
           path: |
-            dist/*.tar.gz
+            dist/*.tar.xz
             dist/*.deb
           if-no-files-found: error
 

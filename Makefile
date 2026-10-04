@@ -54,7 +54,7 @@ rust-run: ## Rust app, debug build
 rust-test:
 	cargo test
 
-linux: rust ## dist/procmon-<version>-linux-<arch>.tar.gz
+linux: rust ## dist/procmon-<version>-linux-<arch>.tar.xz
 	./scripts/package-linux.sh
 
 clean:
