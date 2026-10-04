@@ -39,7 +39,9 @@ struct NetworkProbe {
             rates[pid] = NetworkRates(
                 received: .between(prior.bytesIn, current.bytesIn, over: elapsed),
                 sent: .between(prior.bytesOut, current.bytesOut, over: elapsed),
-                packets: .between(prior.packetsIn + prior.packetsOut, current.packetsIn + current.packetsOut, over: elapsed)
+                packets: .between(prior.packetsIn + prior.packetsOut, current.packetsIn + current.packetsOut, over: elapsed),
+                receivedTotal: Bytes(current.bytesIn),
+                sentTotal: Bytes(current.bytesOut)
             )
         }
         return rates

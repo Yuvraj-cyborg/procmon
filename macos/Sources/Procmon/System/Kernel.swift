@@ -113,8 +113,9 @@ enum Host {
         return (0..<Int(processors)).map { cpu in
             let base = cpu * Int(CPU_STATE_MAX)
             func ticks(_ state: Int32) -> UInt32 { UInt32(bitPattern: info[base + Int(state)]) }
-            let busy = ticks(CPU_STATE_USER) &+ ticks(CPU_STATE_SYSTEM) &+ ticks(CPU_STATE_NICE)
-            return CoreTicks(busy: busy, total: busy &+ ticks(CPU_STATE_IDLE))
+            let user = ticks(CPU_STATE_USER) &+ ticks(CPU_STATE_NICE)
+            let system = ticks(CPU_STATE_SYSTEM)
+            return CoreTicks(user: user, system: system, total: user &+ system &+ ticks(CPU_STATE_IDLE))
         }
     }
 
@@ -127,12 +128,20 @@ enum Host {
 /// One core's cumulative scheduler ticks. The kernel counters are 32-bit and
 /// wrap, so differences use wrapping arithmetic.
 struct CoreTicks: Sendable, Equatable {
-    let busy: UInt32
+    let user: UInt32
+    let system: UInt32
     let total: UInt32
+
+    var busy: UInt32 { user &+ system }
 
     func load(since previous: CoreTicks) -> Ratio {
         let total = total &- previous.total
         return total == 0 ? .zero : Ratio(Double(busy &- previous.busy) / Double(total))
+    }
+
+    /// Ticks spent in apps and in the kernel, and all ticks, since `previous`.
+    func split(since previous: CoreTicks) -> (user: UInt32, system: UInt32, total: UInt32) {
+        (user &- previous.user, system &- previous.system, total &- previous.total)
     }
 }
 

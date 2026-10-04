@@ -170,12 +170,11 @@ struct PID: Hashable, Comparable, Sendable, CustomStringConvertible {
     var description: String { String(raw) }
 }
 
-/// Thread handle from `PROC_PIDLISTTHREADS`: unique within its process only,
-/// so it is always paired with a PID.
+/// System-wide thread id, as `sample` and debuggers print it.
 struct ThreadID: Hashable, Sendable, CustomStringConvertible {
     let raw: UInt64
 
-    var description: String { "0x" + String(raw, radix: 16) }
+    var description: String { String(raw) }
 }
 
 extension Duration {
@@ -195,5 +194,50 @@ extension Duration {
         case (0, _, _): return "\(hours)h \(minutes)m"
         default: return "\(days)d \(hours)h"
         }
+    }
+}
+
+/// Formatting shared by the pages.
+enum Format {
+    /// Milliwatts below one watt, e.g. `12 mW`, `1.50 W`.
+    static func watts(_ value: Double) -> String {
+        value < 1 ? String(format: "%.0f mW", value * 1000) : String(format: "%.2f W", value)
+    }
+
+    /// CPU time as a clock, e.g. `1:02:05.50`.
+    static func clock(_ duration: Duration) -> String {
+        let total = max(0, duration.seconds)
+        let hours = Int(total) / 3600
+        let minutes = Int(total) / 60 % 60
+        let seconds = total - Double(hours * 3600 + minutes * 60)
+        return hours > 0
+            ? String(format: "%d:%02d:%05.2f", hours, minutes, seconds)
+            : String(format: "%d:%05.2f", minutes, seconds)
+    }
+
+    /// Splits "11.4 GB" into its number and unit.
+    static func split(_ formatted: String) -> (value: String, unit: String?) {
+        guard let space = formatted.lastIndex(of: " ") else { return (formatted, nil) }
+        return (String(formatted[..<space]), String(formatted[formatted.index(after: space)...]))
+    }
+
+    /// Counts with their noun, e.g. `1 thread`, `3 threads`.
+    static func count(_ count: Int, _ singular: String, _ plural: String? = nil) -> String {
+        "\(count) \(count == 1 ? singular : plural ?? singular + "s")"
+    }
+}
+
+extension BatteryStatus {
+    /// e.g. "3h 42m left · 331 cycles · 86% health".
+    var summary: String {
+        var parts: [String] = []
+        if let remaining = timeRemaining {
+            parts.append(isCharging ? "Full in \(remaining.compact)" : "\(remaining.compact) left")
+        } else if onPower {
+            parts.append(isCharging ? "Charging" : "On power")
+        }
+        if let cycleCount { parts.append("\(cycleCount) cycles") }
+        if let health { parts.append("\(health.percent.description) health") }
+        return parts.joined(separator: " · ")
     }
 }

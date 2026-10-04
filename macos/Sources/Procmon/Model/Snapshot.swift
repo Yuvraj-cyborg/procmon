@@ -10,9 +10,16 @@ struct Snapshot: Sendable {
     let gpu: GPUStats?
     /// Whole-machine network traffic; `nil` on the first pass.
     let network: InterfaceRates?
+    /// Whole-machine disk traffic; `nil` on the first pass.
+    let disk: DiskActivity?
+    let energy: EnergyStats
     let processes: [ProcessSample]
+    /// ``processes`` rolled up by app, computed off the main thread.
+    let apps: [AppUsage]
     let threadAlerts: [ThreadAlert]
     let coverage: ProbeCoverage
+
+    var threadCount: Int { processes.reduce(0) { $0 + ($1.metrics?.threads ?? 0) } }
 }
 
 // MARK: - Memory
@@ -61,8 +68,13 @@ enum MemoryPressure: Sendable, Equatable {
 struct CPUStats: Sendable, Equatable {
     /// Whole-machine utilisation.
     let total: Ratio
+    /// The part of ``total`` spent in apps and in the kernel.
+    let user: Ratio
+    let system: Ratio
     let cores: [Ratio]
     let load: LoadAverage
+
+    var idle: Ratio { Ratio(1 - total.value) }
 }
 
 struct LoadAverage: Sendable, Equatable {
@@ -82,22 +94,66 @@ struct InterfaceRates: Sendable, Equatable {
     let sent: Throughput
 }
 
-/// Network activity of one process, per second.
+/// Network activity of one process: rates since the last reading, and
+/// totals while its sockets were open.
 struct NetworkRates: Sendable, Equatable {
     let received: Throughput
     let sent: Throughput
     let packets: Rate
+    let receivedTotal: Bytes
+    let sentTotal: Bytes
+}
+
+/// Whole-machine disk traffic, across physical drives.
+struct DiskActivity: Sendable, Equatable {
+    let read: Throughput
+    let written: Throughput
+}
+
+struct EnergyStats: Sendable, Equatable {
+    /// `nil` on Macs without a battery.
+    let battery: BatteryStatus?
+    /// Summed over the processes Procmon may inspect, in watts.
+    let processPower: Double
+    /// Processes holding a power assertion that keeps the Mac awake.
+    let sleepPreventers: [PID: [String]]
+}
+
+struct BatteryStatus: Sendable, Equatable {
+    let level: Ratio
+    let isCharging: Bool
+    let onPower: Bool
+    /// `nil` while macOS is still estimating.
+    let timeRemaining: Duration?
+    let cycleCount: Int?
+    /// Full charge today relative to when new.
+    let health: Ratio?
+    /// macOS's verdict, e.g. "Good" or "Check Battery".
+    let condition: String?
+    /// Watts flowing out of (negative) or into the battery.
+    let power: Double?
+    let temperature: Double?
 }
 
 // MARK: - Processes
 
 struct ProcessSample: Identifiable, Sendable {
     let pid: PID
+    let parent: PID?
     let name: String
     /// Application the process belongs to (its outermost `.app` bundle), or
     /// the process name for plain executables.
     let app: String
     let executable: String?
+    let user: String
+    /// Whether the process belongs to the person running Procmon.
+    let isOwn: Bool
+    /// Running an Intel binary through Rosetta.
+    let isTranslated: Bool
+    /// Holds a power assertion that keeps the Mac awake.
+    let preventsSleep: Bool
+    /// Threads stuck in the kernel or suspended at the last thread probe.
+    let blockedThreads: Int
     let runTime: Duration?
     /// `nil` when the process belongs to another user (usually root) and
     /// macOS will not let an unprivileged app inspect it.
@@ -113,6 +169,8 @@ struct ProcessSample: Identifiable, Sendable {
 
     /// Packets per second above which a process is flagged as flooding the network.
     static let packetFlood = 5_000.0
+
+    var kind: String { isTranslated ? "Intel" : "Apple" }
 
     var noiseReasons: [NoiseReason] {
         var reasons = activity?.noiseReasons ?? []
@@ -134,9 +192,17 @@ struct ProcessMetrics: Sendable {
     let memory: Bytes
     /// Relative to a single core: 200% means two cores fully busy.
     let cpu: Percent
+    /// CPU time used since the process started.
+    let cpuTime: Duration
+    /// Resident set size, "Real Memory" in Activity Monitor.
+    let resident: Bytes
     let threads: Int
     let diskRead: Throughput
     let diskWrite: Throughput
+    let diskReadTotal: Bytes
+    let diskWriteTotal: Bytes
+    /// Power drawn since the last reading, in watts; `nil` on the first one.
+    let power: Double?
     /// Kernel counter rates; `nil` until the process has been seen twice.
     let activity: ActivityRates?
 }

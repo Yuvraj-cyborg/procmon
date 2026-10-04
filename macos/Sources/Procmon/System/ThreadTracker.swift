@@ -72,4 +72,13 @@ struct ThreadTracker {
     mutating func finishPass(at now: ContinuousClock.Instant) {
         tracks = tracks.filter { $0.value.seenAt == now }
     }
+
+    /// Ends a pass that only looked at some processes: threads of `probed`
+    /// processes that were not seen are gone, and so is every process that
+    /// is no longer `alive`.
+    mutating func finishPass(at now: ContinuousClock.Instant, probed: Set<PID>, alive: Set<PID>) {
+        tracks = tracks.filter { key, track in
+            alive.contains(key.pid) && (!probed.contains(key.pid) || track.seenAt == now)
+        }
+    }
 }
