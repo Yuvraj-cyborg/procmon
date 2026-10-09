@@ -7,7 +7,7 @@ import SwiftUI
 /// A column a process list can show. Each case knows how to title, size,
 /// sort and render itself, so pages just pick a list of columns.
 enum ProcessColumn: String, Hashable {
-    case name, pid, memory, memoryShare, cpu, threads, blocked
+    case name, pid, memory, memoryShare, cpu, threads, blocked, gpu, gpuTime
 
     var title: String {
         switch self {
@@ -18,6 +18,8 @@ enum ProcessColumn: String, Hashable {
         case .cpu: "CPU"
         case .threads: "Threads"
         case .blocked: "Blocked"
+        case .gpu: "GPU"
+        case .gpuTime: "GPU time"
         }
     }
 
@@ -27,7 +29,8 @@ enum ProcessColumn: String, Hashable {
         case .name: 220
         case .memoryShare: 120
         case .pid, .threads, .blocked: 64
-        case .memory, .cpu: 80
+        case .memory, .cpu, .gpu: 80
+        case .gpuTime: 96
         }
     }
 
@@ -35,8 +38,10 @@ enum ProcessColumn: String, Hashable {
     var priority: Int {
         switch self {
         case .name: 100
+        case .gpu: 95
         case .cpu, .memory: 90
         case .blocked: 80
+        case .gpuTime: 70
         case .threads: 60
         case .memoryShare: 50
         case .pid: 40
@@ -68,6 +73,8 @@ enum ProcessColumn: String, Hashable {
         case .cpu: process.cpu?.value ?? unknown
         case .threads: process.metrics.map { Double($0.threads) } ?? unknown
         case .blocked: Double(process.blockedThreads)
+        case .gpu: process.gpu?.share.value ?? unknown
+        case .gpuTime: process.gpu?.total.seconds ?? unknown
         }
     }
 
@@ -83,6 +90,8 @@ enum ProcessColumn: String, Hashable {
         case .cpu: process.cpu?.description ?? dash
         case .threads: process.metrics.map { "\($0.threads)" } ?? dash
         case .blocked: process.blockedThreads > 0 ? "\(process.blockedThreads)" : ""
+        case .gpu: process.gpu?.share.description ?? dash
+        case .gpuTime: process.gpu.map { Format.clock($0.total) } ?? dash
         }
     }
 

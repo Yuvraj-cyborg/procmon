@@ -85,7 +85,25 @@ struct LoadAverage: Sendable, Equatable {
 
 struct GPUStats: Sendable, Equatable {
     let name: String
+    let cores: Int?
+    /// Share of time the GPU was doing any work at all.
     let utilization: Ratio
+    /// The two halves of drawing: shading pixels, and sorting geometry into tiles.
+    let renderer: Ratio?
+    let tiler: Ratio?
+    /// Memory the GPU driver holds, out of the Mac's shared RAM.
+    let memoryInUse: Bytes?
+    let memoryAllocated: Bytes?
+    /// Times the GPU hung and was reset since startup.
+    let recoveries: Int
+}
+
+/// How much GPU time one process used.
+struct GPUUsage: Sendable, Equatable {
+    /// GPU time over the last interval, relative to the whole GPU.
+    let share: Percent
+    /// GPU time since the process first used the GPU.
+    let total: Duration
 }
 
 /// Whole-machine network traffic across every non-loopback interface.
@@ -160,6 +178,8 @@ struct ProcessSample: Identifiable, Sendable {
     let metrics: ProcessMetrics?
     /// `nil` when the process had no sockets in the last interval.
     let network: NetworkRates?
+    /// `nil` when the process has never used the GPU.
+    let gpu: GPUUsage?
 
     var id: PID { pid }
     var isRestricted: Bool { metrics == nil }
@@ -214,6 +234,7 @@ struct AppUsage: Identifiable, Sendable {
     let memory: Bytes
     let cpu: Percent
     let threads: Int
+    let gpu: Percent
 
     var id: String { name }
 }
@@ -221,17 +242,20 @@ struct AppUsage: Identifiable, Sendable {
 extension Sequence where Element == ProcessSample {
     /// Rolls processes up by ``ProcessSample/app``, largest memory first.
     func groupedByApp() -> [AppUsage] {
-        var groups: [String: (pids: [PID], memory: Bytes, cpu: Percent, threads: Int)] = [:]
+        var groups: [String: (pids: [PID], memory: Bytes, cpu: Percent, threads: Int, gpu: Percent)] = [:]
         for process in self {
-            var group = groups[process.app] ?? ([], .zero, .zero, 0)
+            var group = groups[process.app] ?? ([], .zero, .zero, 0, .zero)
             group.pids.append(process.pid)
             group.memory += process.memory ?? .zero
             group.cpu = group.cpu + (process.cpu ?? .zero)
             group.threads += process.metrics?.threads ?? 0
+            group.gpu = group.gpu + (process.gpu?.share ?? .zero)
             groups[process.app] = group
         }
         return groups
-            .map { AppUsage(name: $0.key, processes: $0.value.pids, memory: $0.value.memory, cpu: $0.value.cpu, threads: $0.value.threads) }
+            .map { name, group in
+                AppUsage(name: name, processes: group.pids, memory: group.memory, cpu: group.cpu, threads: group.threads, gpu: group.gpu)
+            }
             .sorted { ($0.memory, $1.name) > ($1.memory, $0.name) }
     }
 }
