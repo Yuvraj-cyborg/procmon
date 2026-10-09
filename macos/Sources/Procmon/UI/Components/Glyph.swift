@@ -1,4 +1,4 @@
-// Generated from the Procmon glyph set: 20 glyphs on a 16-point
+// Generated from the Procmon glyph set: 26 glyphs on a 16-point
 // keyline grid, 1.5 pt strokes with round caps and joins. Drawn as paths,
 // so they cost no image assets and stay sharp at any size.
 
@@ -6,6 +6,7 @@ import SwiftUI
 
 enum Glyph: CaseIterable, Sendable {
     case overview, memory, activity, storage, devices, search, close, settings, inspector, refresh, arrowUp, folder, trash, quit, forceQuit, pause, play, chevron, lock, threads
+    case graphics, recovery, photo, film, music, document
 
     /// Stroke width at the design size; scales with the glyph.
     static let stroke: CGFloat = 1.5
@@ -175,6 +176,58 @@ enum Glyph: CaseIterable, Sendable {
             p.move(to: pt(1.75, 4)); p.addLine(to: pt(14.25, 4))
             p.move(to: pt(1.75, 8)); p.addLine(to: pt(9, 8))
             p.move(to: pt(1.75, 12)); p.addLine(to: pt(14.25, 12))
+            }
+        case .graphics:
+            if filled {
+            p.addRoundedRect(in: box(6.75, 6.75, 2.5, 2.5), cornerSize: size(0.5), style: .continuous)
+            } else {
+            p.addRoundedRect(in: box(3.75, 3.75, 8.5, 8.5), cornerSize: size(1.5), style: .continuous)
+            for x: CGFloat in [6.25, 9.75] {
+                p.move(to: pt(x, 1.5)); p.addLine(to: pt(x, 3.75))
+                p.move(to: pt(x, 12.25)); p.addLine(to: pt(x, 14.5))
+            }
+            for y: CGFloat in [6.25, 9.75] {
+                p.move(to: pt(1.5, y)); p.addLine(to: pt(3.75, y))
+                p.move(to: pt(12.25, y)); p.addLine(to: pt(14.5, y))
+            }
+            }
+        case .recovery:
+            if filled {
+                return p
+            } else {
+            p.addLines([pt(5.25, 2.25), pt(2, 5.5), pt(5.25, 8.75)])
+            p.move(to: pt(2.25, 5.5)); p.addLine(to: pt(9.75, 5.5))
+            p.addArc(center: pt(9.75, 9.5), radius: 4 * u, startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
+            p.addLine(to: pt(4.75, 13.5))
+            }
+        case .photo:
+            if filled {
+            p.addEllipse(in: box(9.65, 4.9, 2.2, 2.2))
+            } else {
+            p.addRoundedRect(in: box(1.75, 2.75, 12.5, 10.5), cornerSize: size(2), style: .continuous)
+            p.addLines([pt(1.75, 11.25), pt(5.5, 7.5), pt(9, 11), pt(10.75, 9.25), pt(13.75, 12.25)])
+            }
+        case .film:
+            if filled {
+            p.addLines([pt(6.5, 5.5), pt(10.5, 8), pt(6.5, 10.5)]); p.closeSubpath()
+            } else {
+            p.addRoundedRect(in: box(1.75, 2.75, 12.5, 10.5), cornerSize: size(2), style: .continuous)
+            }
+        case .music:
+            if filled {
+            p.addEllipse(in: box(2.75, 10.5, 3.75, 3))
+            p.addEllipse(in: box(9.25, 9.25, 3.75, 3))
+            } else {
+            p.addLines([pt(6.25, 12), pt(6.25, 3.5), pt(12.75, 2.25), pt(12.75, 10.75)])
+            }
+        case .document:
+            if filled {
+                return p
+            } else {
+            p.addLines([pt(3.25, 1.75), pt(9.5, 1.75), pt(12.75, 5), pt(12.75, 14.25), pt(3.25, 14.25)]); p.closeSubpath()
+            p.addLines([pt(9.5, 1.75), pt(9.5, 5), pt(12.75, 5)])
+            p.move(to: pt(5.75, 8.5)); p.addLine(to: pt(10.25, 8.5))
+            p.move(to: pt(5.75, 11.25)); p.addLine(to: pt(10.25, 11.25))
             }
         }
         return p
