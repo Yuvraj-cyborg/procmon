@@ -33,6 +33,7 @@ final class AppModel {
     let devices = DevicesModel()
     let cleanup = CleanupModel()
     let stacks = StackModel()
+    let graphics = GraphicsModel()
     let preferences = Preferences()
 
     /// Process shown in the details panel.
@@ -54,6 +55,7 @@ final class AppModel {
     var activityQuery = ""
     var memorySort = ProcessSort.by(.memory)
     var activitySort = ProcessSort.by(.cpu)
+    var graphicsSort = ProcessSort.by(.gpu)
 
     init(launch: LaunchOptions) {
         page = launch.initialPage
@@ -86,7 +88,7 @@ final class AppModel {
             cleanup.scan(monitor)
         case .devices, .overview:
             devices.refresh()
-        case .memory, .activity:
+        case .memory, .activity, .graphics:
             break
         }
     }
