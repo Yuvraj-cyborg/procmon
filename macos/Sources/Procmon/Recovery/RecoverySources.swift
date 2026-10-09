@@ -64,18 +64,20 @@ enum RecoverySources {
                     mountPoint: (info[kDADiskDescriptionVolumePathKey as String] as? URL)?.path
                 )
             }
-            let connection = description[kDADiskDescriptionDeviceProtocolKey as String] as? String
+            let image = diskImage(disk.bsdName)
+            let connection = image != nil ? "Disk image" : description[kDADiskDescriptionDeviceProtocolKey as String] as? String
             let model = (description[kDADiskDescriptionDeviceModelKey as String] as? String)?.trimmingCharacters(in: .whitespaces)
             let vendor = (description[kDADiskDescriptionDeviceVendorKey as String] as? String)?.trimmingCharacters(in: .whitespaces)
             let mediaName = (description[kDADiskDescriptionMediaNameKey as String] as? String)?.trimmingCharacters(in: .whitespaces)
-            let name = [vendor, model].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " ")
+            let name = image.flatMap { $0.isEmpty ? nil : $0 }
+                ?? [vendor, model].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " ")
             return RecoveryDisk(
                 bsdName: disk.bsdName,
                 name: name.isEmpty ? mediaName ?? disk.bsdName : name,
                 size: Bytes(disk.size),
                 connection: connection,
-                isInternal: description[kDADiskDescriptionDeviceInternalKey as String] as? Bool ?? false,
-                isDiskImage: connection == "Disk Image",
+                isInternal: image == nil && description[kDADiskDescriptionDeviceInternalKey as String] as? Bool ?? false,
+                isDiskImage: image != nil,
                 volumes: volumes
             )
         }
@@ -83,6 +85,62 @@ enum RecoverySources {
             func rank(_ disk: RecoveryDisk) -> Int { disk.isExternal ? 0 : disk.isDiskImage ? 1 : 2 }
             return (rank(lhs), lhs.bsdName) < (rank(rhs), rhs.bsdName)
         }
+    }
+
+    /// The file name of the image behind an attached disk image, empty when
+    /// unknown, or `nil` for a real disk. Images attached with `hdiutil` and
+    /// those macOS attaches itself sit under different drivers.
+    private static func diskImage(_ bsdName: String) -> String? {
+        var entry = IOServiceGetMatchingService(kIOMainPortDefault, IOBSDNameMatching(kIOMainPortDefault, 0, bsdName))
+        var isImage = false
+        var path: String?
+        // The driver that says "disk image" and the one holding the path are
+        // different levels of the same stack, so the walk goes to the top.
+        while entry != 0, path == nil {
+            var name = [CChar](repeating: 0, count: 128)
+            IOObjectGetClass(entry, &name)
+            let className = String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            if className.contains("HDIX") || className.contains("DiskImage") {
+                isImage = true
+                func property(_ key: String) -> Any? {
+                    IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+                }
+                path = (property("image-path") as? Data).map { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+                    ?? (property("DiskImageURL") as? String).flatMap { URL(string: $0)?.path }
+            }
+            var parent: io_registry_entry_t = 0
+            let status = IORegistryEntryGetParentEntry(entry, kIOServicePlane, &parent)
+            IOObjectRelease(entry)
+            entry = status == KERN_SUCCESS ? parent : 0
+        }
+        if entry != 0 { IOObjectRelease(entry) }
+        guard isImage else { return nil }
+        return path.map { ($0 as NSString).lastPathComponent } ?? ""
+    }
+
+    /// The physical disk, e.g. `disk0`, holding `path`. APFS volumes live in
+    /// a container disk, so the walk goes on up to the drive beneath it.
+    static func physicalDisk(holding path: String) -> String? {
+        var info = statfs()
+        guard statfs(path, &info) == 0 else { return nil }
+        let device = withUnsafeBytes(of: info.f_mntfromname) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        guard device.hasPrefix("/dev/") else { return nil }
+        var entry = IOServiceGetMatchingService(kIOMainPortDefault, IOBSDNameMatching(kIOMainPortDefault, 0, String(device.dropFirst(5))))
+        while entry != 0 {
+            func property(_ key: String) -> Any? {
+                IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+            }
+            if IOObjectConformsTo(entry, "IOMedia") != 0, property("Whole") as? Bool == true,
+               property("Content") as? String != apfsContainer, let name = property("BSD Name") as? String {
+                IOObjectRelease(entry)
+                return name
+            }
+            var parent: io_registry_entry_t = 0
+            let status = IORegistryEntryGetParentEntry(entry, kIOServicePlane, &parent)
+            IOObjectRelease(entry)
+            entry = status == KERN_SUCCESS ? parent : 0
+        }
+        return nil
     }
 
     /// `disk4s1` is a partition of `disk4`; `disk4s1s1` is not a direct one.
