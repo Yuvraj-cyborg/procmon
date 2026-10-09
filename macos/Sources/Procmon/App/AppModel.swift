@@ -34,6 +34,7 @@ final class AppModel {
     let cleanup = CleanupModel()
     let stacks = StackModel()
     let graphics = GraphicsModel()
+    let recovery = RecoveryModel()
     let preferences = Preferences()
 
     /// Process shown in the details panel.
@@ -62,6 +63,7 @@ final class AppModel {
         monitor.interval = preferences.updateSpeed.interval
         monitor.start()
         devices.refresh()
+        recovery.watchDisks()
         if let root = launch.scan {
             storage.scan(root)
         }
@@ -88,6 +90,8 @@ final class AppModel {
             cleanup.scan(monitor)
         case .devices, .overview:
             devices.refresh()
+        case .recovery:
+            if !recovery.isBusy { recovery.refreshDisks() }
         case .memory, .activity, .graphics:
             break
         }

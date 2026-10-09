@@ -159,6 +159,7 @@ private struct PageContainer: View {
             case .activity: ActivityPage()
             case .graphics: GraphicsPage()
             case .storage: StoragePage()
+            case .recovery: RecoveryPage()
             case .devices: DevicesPage()
             }
         }
