@@ -34,10 +34,35 @@ struct PageRenderTests {
         }
         for page in pages {
             model.page = page
+            if page == .recovery {
+                try await renderRecovery(model)
+                continue
+            }
             for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                 let url = folder.appendingPathComponent("\(page.rawValue)-\(suffix).png")
                 try await render(PageSnapshot(page: page).environment(model), appearance: appearance, to: url)
             }
+        }
+    }
+
+    /// The disk list, then the results of scanning `PROCMON_RECOVER_IMAGE`.
+    private func renderRecovery(_ model: AppModel) async throws {
+        for _ in 0..<40 where model.recovery.disks.isEmpty {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try await render(PageSnapshot(page: .recovery).environment(model), appearance: .aqua, to: folder.appendingPathComponent("recovery-disks.png"))
+        guard let image = Foundation.ProcessInfo.processInfo.environment["PROCMON_RECOVER_IMAGE"] else { return }
+        model.recovery.scanImage(URL(fileURLWithPath: image))
+        for _ in 0..<600 where model.recovery.phase != .finished {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        model.recovery.hideSmall = false
+        for file in model.recovery.visible.prefix(3) {
+            model.recovery.selection.insert(file.id)
+        }
+        for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            try await render(PageSnapshot(page: .recovery).environment(model), appearance: appearance,
+                             to: folder.appendingPathComponent("recovery-results-\(suffix).png"), settle: 40)
         }
     }
 
@@ -46,14 +71,14 @@ struct PageRenderTests {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))
     }
 
-    private func render(_ view: some View, appearance: NSAppearance.Name, to url: URL) async throws {
+    private func render(_ view: some View, appearance: NSAppearance.Name, to url: URL, settle: Int = 15) async throws {
         let size = NSSize(width: 1200, height: 900)
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: appearance)
         window.contentView = host
-        for _ in 0..<15 {
+        for _ in 0..<settle {
             host.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
             spin(0.02)
@@ -78,6 +103,7 @@ private struct PageSnapshot: View {
             case .activity: ActivityPage()
             case .graphics: GraphicsPage()
             case .storage: StoragePage()
+            case .recovery: RecoveryPage()
             case .devices: DevicesPage()
             }
         }
