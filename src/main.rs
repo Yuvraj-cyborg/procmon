@@ -3,6 +3,7 @@ mod app;
 mod assets;
 mod cli;
 mod devices;
+mod recovery;
 mod settings;
 mod storage;
 mod system;

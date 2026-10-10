@@ -5132,7 +5132,9 @@ name = "procmon"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-io",
  "gpui-kit",
+ "image",
  "libc",
  "libproc",
  "mach2 0.7.0",
@@ -5141,7 +5143,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo 0.39.6",
+ "wgpu",
+ "windows 0.62.2",
  "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]
