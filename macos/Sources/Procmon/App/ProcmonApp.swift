@@ -12,7 +12,7 @@ struct ProcmonApp: App {
         Window("Procmon", id: "main") {
             RootView()
                 .environment(model)
-                .frame(minWidth: 760, minHeight: 520)
+                .frame(minWidth: RootView.minimumWindowWidth, minHeight: 520)
         }
         .defaultSize(width: 1200, height: 820)
         .windowResizability(.contentMinSize)

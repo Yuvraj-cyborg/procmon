@@ -17,7 +17,7 @@ struct OverviewPage: View {
                     tile(.activity) { ProcessorTile(cpu: snapshot.cpu, history: monitor.cpuHistory) }
                     tile(.memory) { MemoryTile(memory: snapshot.memory) }
                     tile(.activity) { AttentionTile(items: AttentionItem.all(in: snapshot, runaways: model.cleanup.runaways(monitor))) }
-                    tile(.activity) { GraphicsTile(gpu: snapshot.gpu, history: monitor.gpuHistory) }
+                    tile(.graphics) { GraphicsTile(gpu: snapshot.gpu, history: monitor.gpuHistory) }
                     tile(.activity) {
                         PairTile(
                             title: "Network", detail: "All interfaces",

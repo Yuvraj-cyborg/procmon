@@ -56,6 +56,7 @@ mod tests {
             run_time: Duration::ZERO,
             activity: None,
             network: None,
+            gpu: None,
         }
     }
 

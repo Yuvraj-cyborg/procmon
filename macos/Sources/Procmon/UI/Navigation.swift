@@ -4,7 +4,7 @@ import AppKit
 import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
-    case overview, memory, activity, storage, devices
+    case overview, memory, activity, graphics, storage, recovery, devices
 
     var id: Self { self }
 
@@ -13,7 +13,9 @@ enum Page: String, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .memory: "Memory"
         case .activity: "Activity"
+        case .graphics: "Graphics"
         case .storage: "Storage"
+        case .recovery: "Recovery"
         case .devices: "Devices"
         }
     }
@@ -23,12 +25,14 @@ enum Page: String, CaseIterable, Identifiable {
         case .overview: .overview
         case .memory: .memory
         case .activity: .activity
+        case .graphics: .graphics
         case .storage: .storage
+        case .recovery: .recovery
         case .devices: .devices
         }
     }
 
-    /// ⌘1 … ⌘5.
+    /// ⌘1 … ⌘7.
     var shortcut: KeyEquivalent {
         KeyEquivalent(Character(String(Page.allCases.firstIndex(of: self)! + 1)))
     }

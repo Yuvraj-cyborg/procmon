@@ -6,9 +6,12 @@ description = "Memory, CPU, storage and device monitor"
 repository = "https://github.com/Yuvraj-cyborg/procmon"
 authors = ["Yuvraj <yuvrajbiswalofficial@gmail.com>"]
 
+# Everything below beyond gpui-kit is already compiled into gpui-kit; naming
+# it with the same features adds no code beyond what Procmon calls.
 [dependencies]
 anyhow = "1.0.104"
 gpui-kit = "0.6"
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -17,8 +20,35 @@ sysinfo = "0.39.6"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+async-io = "2"
+wgpu = "29"
+zbus = { version = "5", default-features = false, features = ["async-io"] }
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows = { version = "0.62", features = [
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_Performance",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+# Checks the Linux benchmark's WGSL on any machine.
+naga = { version = "29", default-features = false, features = ["wgsl-in"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libproc = "0.14.11"

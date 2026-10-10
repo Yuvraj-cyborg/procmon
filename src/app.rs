@@ -10,8 +10,8 @@ use gpui_kit::{
 };
 
 use crate::actions::{
-    CloseWindow, FocusSearch, Refresh, ShowActivity, ShowDevices, ShowMemory, ShowStorage,
-    ToggleSidebar,
+    CloseWindow, FocusSearch, Refresh, ShowActivity, ShowDevices, ShowGraphics, ShowMemory,
+    ShowRecovery, ShowStorage, ToggleSidebar,
 };
 use crate::cli::LaunchOptions;
 use crate::settings::{Settings, ThemePreference};
@@ -19,8 +19,10 @@ use crate::system::{Monitor, executable_path};
 use crate::theme;
 use crate::ui::activity::ActivityPage;
 use crate::ui::devices::DevicesPage;
+use crate::ui::graphics::GraphicsPage;
 use crate::ui::memory::MemoryPage;
 use crate::ui::process_detail::ProcessDetail;
+use crate::ui::recovery::RecoveryPage;
 use crate::ui::storage::StoragePage;
 
 /// A top-level destination in the sidebar.
@@ -30,10 +32,27 @@ pub enum Page {
     Activity,
     Storage,
     Devices,
+    Graphics,
+    Recovery,
 }
 
 impl Page {
-    pub const ALL: [Page; 4] = [Page::Memory, Page::Activity, Page::Storage, Page::Devices];
+    /// In shortcut order: ⌘1 is Memory, ⌘6 is Recovery.
+    pub const ALL: [Page; 6] = [
+        Page::Memory,
+        Page::Activity,
+        Page::Storage,
+        Page::Devices,
+        Page::Graphics,
+        Page::Recovery,
+    ];
+    const MONITOR: [Page; 5] = [
+        Page::Memory,
+        Page::Activity,
+        Page::Graphics,
+        Page::Storage,
+        Page::Devices,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -41,6 +60,8 @@ impl Page {
             Page::Activity => "Activity",
             Page::Storage => "Storage",
             Page::Devices => "Devices",
+            Page::Graphics => "Graphics",
+            Page::Recovery => "Recovery",
         }
     }
 
@@ -50,6 +71,8 @@ impl Page {
             Page::Activity => "CPU load, blocked threads and noisy processes",
             Page::Storage => "Volumes and what is taking up space",
             Page::Devices => "Connected hardware and loaded drivers",
+            Page::Graphics => "GPU load, the apps using it, and a benchmark",
+            Page::Recovery => "Bring back deleted photos, videos and documents",
         }
     }
 
@@ -59,6 +82,8 @@ impl Page {
             Page::Activity => Icon::new(IconName::Cpu),
             Page::Storage => Icon::new(IconName::HardDrive),
             Page::Devices => Icon::new(gpui_kit::assets::IconName::Usb),
+            Page::Graphics => Icon::new(gpui_kit::assets::IconName::Gauge),
+            Page::Recovery => Icon::new(gpui_kit::assets::IconName::Undo2),
         }
     }
 }
@@ -92,6 +117,7 @@ enum SidebarMode {
 pub struct AppShell {
     page: Page,
     views: PageViews,
+    monitor: Entity<Monitor>,
     sidebar: SidebarMode,
     focus_handle: FocusHandle,
     _appearance: Subscription,
@@ -102,6 +128,8 @@ struct PageViews {
     activity: Entity<ActivityPage>,
     storage: Entity<StoragePage>,
     devices: Entity<DevicesPage>,
+    graphics: Entity<GraphicsPage>,
+    recovery: Entity<RecoveryPage>,
 }
 
 impl PageViews {
@@ -111,6 +139,8 @@ impl PageViews {
             Page::Activity => self.activity.clone().into(),
             Page::Storage => self.storage.clone().into(),
             Page::Devices => self.devices.clone().into(),
+            Page::Graphics => self.graphics.clone().into(),
+            Page::Recovery => self.recovery.clone().into(),
         }
     }
 }
@@ -136,14 +166,19 @@ impl AppShell {
                 Theme::sync_system_appearance(Some(window), cx);
             }
         });
+        let page = options.initial_page();
+        monitor.read(cx).set_gpu_detail(page == Page::Graphics);
         Self {
-            page: options.initial_page(),
+            page,
             views: PageViews {
                 memory: cx.new(|cx| MemoryPage::new(monitor.clone(), window, cx)),
                 activity: cx.new(|cx| ActivityPage::new(monitor.clone(), window, cx)),
                 storage: cx.new(|cx| StoragePage::new(options.scan.clone(), window, cx)),
                 devices: cx.new(|cx| DevicesPage::new(window, cx)),
+                graphics: cx.new(|cx| GraphicsPage::new(monitor.clone(), window, cx)),
+                recovery: cx.new(|cx| RecoveryPage::new(options.recover.clone(), window, cx)),
             },
+            monitor,
             sidebar: SidebarMode::Auto,
             focus_handle,
             _appearance: appearance,
@@ -160,7 +195,7 @@ impl AppShell {
                 .views
                 .activity
                 .update(cx, |page, cx| page.focus_search(window, cx)),
-            Page::Storage | Page::Devices => {}
+            Page::Storage | Page::Devices | Page::Graphics | Page::Recovery => {}
         }
     }
 
@@ -191,26 +226,30 @@ impl AppShell {
         match self.page {
             Page::Storage => self.views.storage.update(cx, |page, cx| page.rescan(cx)),
             Page::Devices => self.views.devices.update(cx, |page, cx| page.refresh(cx)),
-            // Memory and Activity update live every second.
-            Page::Memory | Page::Activity => {}
+            Page::Recovery => self.views.recovery.update(cx, |page, cx| page.refresh(cx)),
+            // These update live every second.
+            Page::Memory | Page::Activity | Page::Graphics => {}
         }
     }
 
     fn navigate(&mut self, page: Page, cx: &mut Context<Self>) {
         if self.page != page {
             self.page = page;
+            self.monitor.read(cx).set_gpu_detail(page == Page::Graphics);
             cx.notify();
         }
     }
 
     fn render_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let collapsed = self.sidebar_collapsed(window);
-        let items = Page::ALL.map(|page| {
+        let item = |page: Page, cx: &mut Context<Self>| {
             SidebarMenuItem::new(page.title())
                 .icon(page.icon())
                 .active(self.page == page)
                 .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx)))
-        });
+        };
+        let items = Page::MONITOR.map(|page| item(page, cx));
+        let tools = item(Page::Recovery, cx);
         let preference = Settings::get(cx).theme;
         let theme_icon = match preference {
             ThemePreference::System => Icon::new(gpui_kit::assets::IconName::Monitor),
@@ -221,6 +260,7 @@ impl AppShell {
             .collapsed(collapsed)
             .w_56()
             .child(SidebarGroup::new("Monitor").child(SidebarMenu::new().children(items)))
+            .child(SidebarGroup::new("Tools").child(SidebarMenu::new().child(tools)))
             .footer(
                 Button::new("theme")
                     .icon(theme_icon)
@@ -248,6 +288,12 @@ impl Render for AppShell {
             )
             .on_action(cx.listener(|this, _: &ShowStorage, _, cx| this.navigate(Page::Storage, cx)))
             .on_action(cx.listener(|this, _: &ShowDevices, _, cx| this.navigate(Page::Devices, cx)))
+            .on_action(
+                cx.listener(|this, _: &ShowGraphics, _, cx| this.navigate(Page::Graphics, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ShowRecovery, _, cx| this.navigate(Page::Recovery, cx)),
+            )
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh_page(cx)))
             .on_action(
                 cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)),

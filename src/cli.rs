@@ -7,15 +7,19 @@ const USAGE: &str = "\
 Usage: procmon [OPTIONS]
 
 Options:
-  --page <name>    Open on a page: memory, activity, storage or devices
-  --scan <path>    Open Storage and start scanning <path>
-  --inspect <pid>  Open the detail sheet for a process
-  -h, --help       Print this help";
+  --page <name>      Open on a page: memory, activity, storage, devices,
+                     graphics or recovery
+  --scan <path>      Open Storage and start scanning <path>
+  --recover <path>   Open Recovery and search a disk (e.g. /dev/sdb) or a
+                     disk image for deleted files
+  --inspect <pid>    Open the detail sheet for a process
+  -h, --help         Print this help";
 
 #[derive(Debug, Default)]
 pub struct LaunchOptions {
     page: Option<Page>,
     pub scan: Option<PathBuf>,
+    pub recover: Option<PathBuf>,
     pub inspect: Option<Pid>,
 }
 
@@ -34,6 +38,7 @@ impl LaunchOptions {
                     Err(err) => eprintln!("procmon: {err}"),
                 },
                 ("--scan", Some(path)) => options.scan = Some(PathBuf::from(path)),
+                ("--recover", Some(path)) => options.recover = Some(PathBuf::from(path)),
                 ("--inspect", Some(pid)) => match pid.parse() {
                     Ok(pid) => options.inspect = Some(Pid(pid)),
                     Err(_) => eprintln!("procmon: `{pid}` is not a process id"),
@@ -45,11 +50,12 @@ impl LaunchOptions {
     }
 
     pub fn initial_page(&self) -> Page {
-        match (self.page, &self.scan, self.inspect) {
-            (Some(page), _, _) => page,
-            (None, Some(_), _) => Page::Storage,
-            (None, None, Some(_)) => Page::Activity,
-            (None, None, None) => Page::Memory,
+        match (self.page, &self.scan, &self.recover, self.inspect) {
+            (Some(page), ..) => page,
+            (None, Some(_), ..) => Page::Storage,
+            (None, None, Some(_), _) => Page::Recovery,
+            (None, None, None, Some(_)) => Page::Activity,
+            (None, None, None, None) => Page::Memory,
         }
     }
 }

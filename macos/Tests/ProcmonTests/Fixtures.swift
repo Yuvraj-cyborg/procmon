@@ -12,7 +12,8 @@ extension ProcessSample {
         threads: Int = 1,
         user: String = "me",
         isOwn: Bool = true,
-        blocked: Int = 0
+        blocked: Int = 0,
+        gpu: Double? = nil
     ) -> ProcessSample {
         ProcessSample(
             pid: PID(pid), parent: parent.map(PID.init), name: name, app: app ?? name, executable: nil, user: user,
@@ -23,7 +24,8 @@ extension ProcessSample {
                     diskRead: .zero, diskWrite: .zero, diskReadTotal: .zero, diskWriteTotal: .zero, power: nil, activity: nil
                 )
             },
-            network: nil
+            network: nil,
+            gpu: gpu.map { GPUUsage(share: Percent($0), total: .zero) }
         )
     }
 }

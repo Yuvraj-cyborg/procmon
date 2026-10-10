@@ -68,6 +68,8 @@ actor Sampler {
     private var battery: BatteryStatus?
     private var sleepPreventers: [PID: [String]] = [:]
     private var lastPowerProbe: ContinuousClock.Instant?
+    /// GPU time per process at the last pass, in nanoseconds.
+    private var gpuTimes: [PID: UInt64] = [:]
 
     init() {
         lastSample = clock.now
@@ -97,6 +99,9 @@ actor Sampler {
             sleepPreventers = PowerProbe.sleepPreventers()
             lastPowerProbe = now
         }
+        let gpuNow = GPUProbe.processTimes()
+        let gpu = Self.gpuUsage(from: gpuTimes, to: gpuNow, over: elapsed)
+        gpuTimes = gpuNow
 
         var coverage = ProbeCoverage()
         var probed = Set<PID>()
@@ -171,7 +176,8 @@ actor Sampler {
                 blockedThreads: blocked[pid] ?? 0,
                 runTime: identity.started.map { .seconds(max(0, wallNow.timeIntervalSince($0))) },
                 metrics: metrics,
-                network: networkRates[pid]
+                network: networkRates[pid],
+                gpu: gpu[pid]
             ))
         }
         counters = nextCounters
@@ -274,6 +280,18 @@ actor Sampler {
         let wall = elapsed.seconds
         guard wall > 0, now >= before else { return .zero }
         return Percent((now - before).seconds / wall * 100)
+    }
+
+    /// Each process's share of the GPU, from two readings of its GPU-time
+    /// counter. A process seen for the first time has used none yet.
+    static func gpuUsage(from before: [PID: UInt64], to now: [PID: UInt64], over elapsed: Duration) -> [PID: GPUUsage] {
+        var usage: [PID: GPUUsage] = [:]
+        usage.reserveCapacity(now.count)
+        for (pid, total) in now {
+            let nanosecondsPerSecond = before[pid].map { Rate.between($0, total, over: elapsed).perSecond } ?? 0
+            usage[pid] = GPUUsage(share: Percent(nanosecondsPerSecond / 1e7), total: .nanoseconds(Int64(clamping: total)))
+        }
+        return usage
     }
 
     /// Watts, from two readings of a nanojoule counter.
