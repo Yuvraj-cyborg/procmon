@@ -90,14 +90,10 @@ impl Session {
     }
 }
 
-/// Thumbnails cameras embed and icons apps cache: rarely what anyone lost.
+/// Small files found by content are mostly icons and thumbnail caches; ones
+/// a folder still names were put there by someone, so they always show.
 fn is_tiny(file: &FoundFile) -> bool {
-    let limit = if file.kind == Kind::Photo {
-        30_000
-    } else {
-        4_096
-    };
-    file.size().0 < limit
+    file.origin == Origin::Contents && file.size().0 < 16 * 1024
 }
 
 impl RecoveryPage {
@@ -720,7 +716,7 @@ impl RecoveryPage {
                     .child(div().flex_1())
                     .child(
                         Switch::new("hide-small")
-                            .label("Hide tiny files")
+                            .label("Hide small files")
                             .checked(hide_small)
                             .small()
                             .on_click(cx.listener(|this, checked: &bool, _, cx| {
@@ -742,6 +738,8 @@ impl RecoveryPage {
                             .text_color(theme.muted_foreground)
                             .child(if running {
                                 "Nothing yet. Files appear here as they are found."
+                            } else if total_found > 0 {
+                                "Nothing matches. Small files are hidden."
                             } else {
                                 "Nothing recoverable was found."
                             }),
