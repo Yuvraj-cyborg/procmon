@@ -6,6 +6,8 @@ use std::{fs, io};
 use gpui_kit::{App, Global};
 use serde::{Deserialize, Serialize};
 
+use crate::gpu::BenchRecord;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemePreference {
@@ -33,11 +35,13 @@ impl ThemePreference {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemePreference,
     pub group_by_app: bool,
+    /// Finished GPU benchmarks, newest first.
+    pub benchmarks: Vec<BenchRecord>,
 }
 
 impl Default for Settings {
@@ -45,6 +49,7 @@ impl Default for Settings {
         Self {
             theme: ThemePreference::System,
             group_by_app: true,
+            benchmarks: Vec::new(),
         }
     }
 }
