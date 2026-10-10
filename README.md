@@ -40,7 +40,8 @@ make linux     # Linux: build a .tar.xz in dist/
 - Some processes belong to the system. Run Procmon with `sudo` to see their full details.
 - macOS guards folders like Desktop, Documents and Downloads one by one. Procmon asks once for Full Disk Access instead. If you say no, those folders are left out of scans, and macOS never asks again.
 - macOS does not let one app stop another app's threads. To free a stuck thread, quit or force quit its process.
-- Recovery reads disks block by block, so macOS asks for an administrator's password first. Procmon can only read the disk, and it never runs as root.
+- Recovery reads disks block by block, so it needs an administrator's permission. macOS and Linux ask for a password (on Linux through UDisks2, or run Procmon with `sudo`). On Windows, click **Restart as Administrator** on the Recovery page. Procmon only reads the disk; it never writes to it.
 - Recover files as soon as you can, and don't save anything new to that disk until then. New files can take the space deleted ones used.
 - Files deleted from a Mac's built-in SSD rarely come back: the SSD erases freed space within minutes, and its contents are encrypted. Look in Time Machine or iCloud instead.
-- On Linux and Windows, memory, CPU, processes and disk scans work. The rest is macOS only for now.
+- On Linux and Windows, Recovery previews photos (JPEG, PNG, GIF, BMP, TIFF, WebP); other files are recovered without a preview. The GPU benchmark uses Vulkan on Linux and Direct3D 11 on Windows.
+- Thread states, memory pressure and the Devices page are macOS only for now.
