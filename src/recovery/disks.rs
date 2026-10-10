@@ -140,7 +140,11 @@ mod platform {
         }
         let image = name.starts_with("loop");
         let backing = image.then(|| read(sys.join("loop/backing_file"))).flatten();
-        if image && backing.is_none() {
+        // Ubuntu mounts every snap package from a loop device.
+        let snap = backing
+            .as_deref()
+            .is_some_and(|file| file.ends_with(".snap") || file.contains("/snapd/"));
+        if image && (backing.is_none() || snap) {
             return None;
         }
         let device = fs::canonicalize(sys.join("device"))
