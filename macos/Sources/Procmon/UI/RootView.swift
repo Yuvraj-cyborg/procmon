@@ -10,6 +10,9 @@ struct RootView: View {
     static let minimumPageWidth: CGFloat = 420
     static let comfortablePageWidth: CGFloat = 600
     static let inspectorWidth: CGFloat = 340
+    static let minimumWindowWidth: CGFloat = 760
+    /// From this width the toolbar names its pages; below it, icons only.
+    static let namedPagesWidth: CGFloat = 1_020
 
     @Environment(AppModel.self) private var model
     @State private var width: CGFloat = 1200
@@ -25,12 +28,12 @@ struct RootView: View {
                 // Narrow windows keep their toolbar room for the pages.
                 if width >= 900 {
                     ToolbarItem(placement: .navigation) {
-                        BrandMark(compact: width < 1_020)
+                        BrandMark(compact: width < Self.namedPagesWidth)
                     }
                     .withoutSharedBackground()
                 }
                 ToolbarItem(placement: .principal) {
-                    NavBar(selection: $model.page, compact: width < 1_020)
+                    NavBar(selection: $model.page, compact: width < Self.namedPagesWidth)
                 }
                 .withoutSharedBackground()
                 ToolbarItem(placement: .primaryAction) {
