@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui_kit::SharedString;
@@ -13,6 +15,7 @@ use super::snapshot::{
     ActivityRates, CpuStats, LoadAverage, MemoryStats, ProbeCoverage, ProcessInfo, Snapshot,
     ThreadAlert, ThreadAlertKind,
 };
+use crate::gpu::GpuProbe;
 use crate::units::{Bytes, Percent, Pid, Rate, ThreadId, Throughput};
 
 /// Collects [`Snapshot`]s. Holds the previous readings needed to turn
@@ -33,10 +36,14 @@ pub struct Sampler {
     thread_alerts: Vec<ThreadAlert>,
     network: NetworkProbe,
     network_rates: HashMap<Pid, NetworkRates>,
+    gpu: GpuProbe,
+    /// Set while the Graphics page is open: per-process GPU use is costly to
+    /// gather on Linux.
+    gpu_detail: Arc<AtomicBool>,
 }
 
 impl Sampler {
-    pub fn new() -> Self {
+    pub fn new(gpu_detail: Arc<AtomicBool>) -> Self {
         let system = System::new_with_specifics(
             RefreshKind::nothing()
                 .with_memory(MemoryRefreshKind::everything())
@@ -52,6 +59,8 @@ impl Sampler {
             thread_alerts: Vec::new(),
             network: NetworkProbe::default(),
             network_rates: HashMap::new(),
+            gpu: GpuProbe::new(),
+            gpu_detail,
         }
     }
 
@@ -81,6 +90,9 @@ impl Sampler {
             self.network_rates = self.network.sample(now);
         }
         self.passes += 1;
+        let (gpu, gpu_usage) = self
+            .gpu
+            .sample(self.gpu_detail.load(Ordering::Relaxed), elapsed);
 
         let mut coverage = ProbeCoverage::default();
         let mut thread_alerts = Vec::new();
@@ -123,6 +135,7 @@ impl Sampler {
                     run_time: Duration::from_secs(process.run_time()),
                     activity,
                     network: self.network_rates.get(&pid).copied(),
+                    gpu: gpu_usage.get(&pid).copied(),
                     app: app_name(process.exe(), &name),
                     name,
                 }
@@ -138,6 +151,7 @@ impl Sampler {
         Snapshot {
             memory: self.memory_stats(),
             cpu: self.cpu_stats(),
+            gpu,
             processes,
             thread_alerts: self.thread_alerts.clone(),
             coverage,
@@ -374,7 +388,7 @@ mod tests {
     #[test]
     #[ignore]
     fn sampler_live() {
-        let mut sampler = Sampler::new();
+        let mut sampler = Sampler::new(Arc::new(AtomicBool::new(true)));
         std::thread::sleep(Duration::from_millis(500));
         let started = Instant::now();
         let snapshot = sampler.sample();
@@ -396,7 +410,7 @@ mod tests {
     #[ignore]
     fn alerts_live() {
         let pid = Pid(std::env::var("PROBE_PID").unwrap().parse().unwrap());
-        let mut sampler = Sampler::new();
+        let mut sampler = Sampler::new(Arc::default());
         for _ in 0..13 {
             let snapshot = sampler.sample();
             let alerts: Vec<_> = snapshot

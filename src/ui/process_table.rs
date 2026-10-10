@@ -37,11 +37,15 @@ pub enum ProcessColumn {
     NetOut,
     Packets,
     Uptime,
+    Gpu,
+    GpuMemory,
 }
 
 impl ProcessColumn {
     fn key(self) -> &'static str {
         match self {
+            Self::Gpu => "gpu",
+            Self::GpuMemory => "gpu_memory",
             Self::Name => "name",
             Self::Pid => "pid",
             Self::Memory => "memory",
@@ -62,6 +66,8 @@ impl ProcessColumn {
 
     fn title(self) -> &'static str {
         match self {
+            Self::Gpu => "GPU",
+            Self::GpuMemory => "GPU memory",
             Self::Name => "Process",
             Self::Pid => "PID",
             Self::Memory => "Memory",
@@ -100,7 +106,11 @@ impl ProcessColumn {
         fn net(p: &ProcessInfo, f: fn(&NetworkRates) -> f64) -> f64 {
             p.network.as_ref().map_or(-1.0, f)
         }
+        let gpu = |p: &ProcessInfo| p.gpu.map_or(-1.0, |g| g.share.get());
+        let gpu_memory = |p: &ProcessInfo| p.gpu.and_then(|g| g.memory);
         match self {
+            Self::Gpu => gpu(a).total_cmp(&gpu(b)),
+            Self::GpuMemory => gpu_memory(a).cmp(&gpu_memory(b)),
             Self::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             Self::Pid => a.pid.cmp(&b.pid),
             Self::Memory | Self::MemoryShare => a.memory.cmp(&b.memory),
@@ -132,6 +142,11 @@ impl ProcessColumn {
                 .map_or_else(|| "—".to_string(), |a| f(a).to_string())
         };
         match self {
+            Self::Gpu => p.gpu.map_or_else(|| "—".into(), |g| g.share.to_string()),
+            Self::GpuMemory => p
+                .gpu
+                .and_then(|g| g.memory)
+                .map_or_else(|| "—".into(), |m| m.binary().to_string()),
             Self::Name => return p.name.clone(),
             Self::Pid => p.pid.to_string(),
             Self::Memory => p.memory.binary().to_string(),
@@ -171,6 +186,7 @@ pub struct ProcessTable {
     total_memory: Bytes,
     selected: Option<Pid>,
     on_inspect: Option<InspectHandler>,
+    only: Option<fn(&ProcessInfo) -> bool>,
 }
 
 impl ProcessTable {
@@ -184,7 +200,14 @@ impl ProcessTable {
             total_memory: Bytes::ZERO,
             selected: None,
             on_inspect: None,
+            only: None,
         }
+    }
+
+    /// Lists only the processes `keep` accepts.
+    pub fn only(mut self, keep: fn(&ProcessInfo) -> bool) -> Self {
+        self.only = Some(keep);
+        self
     }
 
     /// Double-clicking a row or choosing "Inspect" calls `handler`.
@@ -214,7 +237,7 @@ impl ProcessTable {
         self.rows = snapshot
             .processes
             .iter()
-            .filter(|p| self.query.matches_process(p))
+            .filter(|p| self.only.is_none_or(|keep| keep(p)) && self.query.matches_process(p))
             .cloned()
             .collect();
         self.apply_sort();

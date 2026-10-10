@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use gpui_kit::{AppContext as _, Context, Task};
@@ -16,34 +17,42 @@ pub struct Monitor {
     latest: Option<Arc<Snapshot>>,
     cpu_history: History<Ratio>,
     memory_history: History<Ratio>,
+    gpu_history: History<Ratio>,
+    gpu_detail: Arc<AtomicBool>,
     _sampling: Task<()>,
 }
 
 impl Monitor {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let sampling = cx.spawn(async move |this, cx| {
-            let mut sampler = Sampler::new();
-            loop {
-                // The sampler moves to a worker thread and back so the UI thread
-                // never blocks on hundreds of proc_pidinfo calls.
-                let (returned, snapshot) = cx
-                    .background_spawn(async move {
-                        let snapshot = sampler.sample();
-                        (sampler, snapshot)
-                    })
-                    .await;
-                sampler = returned;
-                let alive = this.update(cx, |monitor, cx| monitor.push(snapshot, cx));
-                if alive.is_err() {
-                    break;
+        let gpu_detail = Arc::new(AtomicBool::new(false));
+        let sampling = cx.spawn({
+            let gpu_detail = gpu_detail.clone();
+            async move |this, cx| {
+                let mut sampler = Sampler::new(gpu_detail);
+                loop {
+                    // The sampler moves to a worker thread and back so the UI thread
+                    // never blocks on hundreds of proc_pidinfo calls.
+                    let (returned, snapshot) = cx
+                        .background_spawn(async move {
+                            let snapshot = sampler.sample();
+                            (sampler, snapshot)
+                        })
+                        .await;
+                    sampler = returned;
+                    let alive = this.update(cx, |monitor, cx| monitor.push(snapshot, cx));
+                    if alive.is_err() {
+                        break;
+                    }
+                    cx.background_executor().timer(SAMPLE_INTERVAL).await;
                 }
-                cx.background_executor().timer(SAMPLE_INTERVAL).await;
             }
         });
         Self {
             latest: None,
             cpu_history: History::new(HISTORY_LEN),
             memory_history: History::new(HISTORY_LEN),
+            gpu_history: History::new(HISTORY_LEN),
+            gpu_detail,
             _sampling: sampling,
         }
     }
@@ -52,6 +61,9 @@ impl Monitor {
         self.cpu_history.push(snapshot.cpu.total);
         self.memory_history
             .push(snapshot.memory.used.ratio_of(snapshot.memory.total));
+        if let Some(load) = snapshot.gpu.as_ref().and_then(|gpu| gpu.utilization) {
+            self.gpu_history.push(load);
+        }
         self.latest = Some(Arc::new(snapshot));
         cx.notify();
     }
@@ -66,6 +78,15 @@ impl Monitor {
 
     pub fn memory_history(&self) -> &History<Ratio> {
         &self.memory_history
+    }
+
+    pub fn gpu_history(&self) -> &History<Ratio> {
+        &self.gpu_history
+    }
+
+    /// Asks for per-process GPU use while the Graphics page is showing.
+    pub fn set_gpu_detail(&self, wanted: bool) {
+        self.gpu_detail.store(wanted, Ordering::Relaxed);
     }
 }
 

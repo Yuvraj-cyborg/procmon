@@ -5,6 +5,7 @@ use std::time::Duration;
 use gpui_kit::SharedString;
 
 use super::network::NetworkRates;
+use crate::gpu::{GpuStats, GpuUsage};
 use crate::units::{Bytes, Percent, Pid, Rate, Ratio, ThreadId, Throughput};
 
 /// Everything measured in one sampling pass.
@@ -12,6 +13,8 @@ use crate::units::{Bytes, Percent, Pid, Rate, Ratio, ThreadId, Throughput};
 pub struct Snapshot {
     pub memory: MemoryStats,
     pub cpu: CpuStats,
+    /// `None` where no GPU readings are available.
+    pub gpu: Option<GpuStats>,
     pub processes: Vec<ProcessInfo>,
     pub thread_alerts: Vec<ThreadAlert>,
     pub coverage: ProbeCoverage,
@@ -104,6 +107,8 @@ pub struct ProcessInfo {
     pub activity: Option<ActivityRates>,
     /// `None` when the process had no sockets in the last interval.
     pub network: Option<NetworkRates>,
+    /// `None` when the process isn't using the GPU, or nobody is looking.
+    pub gpu: Option<GpuUsage>,
 }
 
 impl ProcessInfo {
@@ -296,6 +301,7 @@ mod tests {
             run_time: Duration::ZERO,
             activity: None,
             network: None,
+            gpu: None,
         }
     }
 
