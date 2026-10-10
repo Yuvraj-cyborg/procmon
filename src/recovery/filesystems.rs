@@ -22,14 +22,19 @@ pub struct Partition {
 /// Partitions from an MBR or GPT; the whole disk when there is neither, as on
 /// cards formatted without one.
 pub fn partitions(r: &mut Reader, sector: u64) -> Vec<Partition> {
-    let whole = vec![Partition { offset: 0, length: r.size() }];
+    let whole = vec![Partition {
+        offset: 0,
+        length: r.size(),
+    }];
     if r.u16le(510) != Some(0xAA55) || is_boot_sector(r, 0) {
         return whole;
     }
     let mut found = Vec::new();
     for index in 0..4 {
         let entry = 446 + index * 16;
-        let (Some(kind), Some(first), Some(count)) = (r.byte(entry + 4), r.u32le(entry + 8), r.u32le(entry + 12)) else {
+        let (Some(kind), Some(first), Some(count)) =
+            (r.byte(entry + 4), r.u32le(entry + 8), r.u32le(entry + 12))
+        else {
             continue;
         };
         if kind == 0 || count == 0 || matches!(kind, 0x05 | 0x0F) {
@@ -60,10 +65,14 @@ fn gpt(r: &mut Reader, sector: u64) -> Option<Vec<Partition>> {
     for index in 0..u64::from(count) {
         let entry = table * sector + index * u64::from(entry_size);
         // An all-zero type marks an unused entry.
-        if r.bytes(entry, 16).is_none_or(|kind| kind.iter().all(|b| *b == 0)) {
+        if r.bytes(entry, 16)
+            .is_none_or(|kind| kind.iter().all(|b| *b == 0))
+        {
             continue;
         }
-        let (Some(first), Some(last)) = (r.u64le(entry + 32), r.u64le(entry + 40)) else { continue };
+        let (Some(first), Some(last)) = (r.u64le(entry + 32), r.u64le(entry + 40)) else {
+            continue;
+        };
         let offset = first * sector;
         if last >= first && offset < r.size() {
             found.push(Partition {
@@ -91,7 +100,12 @@ pub struct DirectoryScan {
 }
 
 /// Folders systems fill with their own bookkeeping.
-const SKIPPED_FOLDERS: [&str; 4] = [".Spotlight-V100", ".fseventsd", ".TemporaryItems", "System Volume Information"];
+const SKIPPED_FOLDERS: [&str; 4] = [
+    ".Spotlight-V100",
+    ".fseventsd",
+    ".TemporaryItems",
+    "System Volume Information",
+];
 
 /// Copies macOS leaves next to each file, and other metadata nobody misses.
 fn is_noise(name: &str) -> bool {
@@ -99,7 +113,11 @@ fn is_noise(name: &str) -> bool {
 }
 
 /// Reads a FAT or exFAT volume in `partition`, if there is one.
-pub fn scan(source: &dyn ByteSource, partition: Partition, cancelled: &dyn Fn() -> bool) -> Option<DirectoryScan> {
+pub fn scan(
+    source: &dyn ByteSource,
+    partition: Partition,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<DirectoryScan> {
     let mut reader = Reader::new(source);
     if let Some(volume) = ExFatVolume::read(&mut reader, partition.offset) {
         return Some(volume.scan(&mut reader, cancelled));
@@ -164,7 +182,10 @@ impl FatVolume {
         if !matches!(r.byte(start)?, 0xEB | 0xE9) || r.u16le(start + 510)? != 0xAA55 {
             return None;
         }
-        let sector = u64::from(r.u16le(start + 11).filter(|s| [512, 1024, 2048, 4096].contains(s))?);
+        let sector = u64::from(
+            r.u16le(start + 11)
+                .filter(|s| [512, 1024, 2048, 4096].contains(s))?,
+        );
         let per_cluster = r.byte(start + 13).filter(|p| p.is_power_of_two())?;
         let reserved = u64::from(r.u16le(start + 14).filter(|r| *r > 0)?);
         let fats = u64::from(r.byte(start + 16).filter(|f| (1..=2).contains(f))?);
@@ -174,8 +195,16 @@ impl FatVolume {
         let large = r.u32le(start + 32)?;
         let fat_large = r.u32le(start + 36)?;
         let root_cluster = r.u32le(start + 44)?;
-        let total = if small != 0 { u64::from(small) } else { u64::from(large) };
-        let fat_sectors = if fat_small != 0 { u64::from(fat_small) } else { u64::from(fat_large) };
+        let total = if small != 0 {
+            u64::from(small)
+        } else {
+            u64::from(large)
+        };
+        let fat_sectors = if fat_small != 0 {
+            u64::from(fat_small)
+        } else {
+            u64::from(fat_large)
+        };
         let root_sectors = (root_entries * 32).div_ceil(sector);
         let first_data = reserved + fats * fat_sectors + root_sectors;
         if total <= first_data || fat_sectors == 0 {
@@ -225,7 +254,9 @@ impl FatVolume {
     fn entry(&self, cluster: u32, r: &mut Reader) -> Option<u32> {
         let cluster64 = u64::from(cluster);
         match self.kind {
-            FatKind::Fat32 => r.u32le(self.fat_offset + cluster64 * 4).map(|v| v & 0x0FFF_FFFF),
+            FatKind::Fat32 => r
+                .u32le(self.fat_offset + cluster64 * 4)
+                .map(|v| v & 0x0FFF_FFFF),
             FatKind::Fat16 => r.u16le(self.fat_offset + cluster64 * 2).map(u32::from),
             FatKind::Fat12 => r
                 .u16le(self.fat_offset + cluster64 + cluster64 / 2)
@@ -252,7 +283,11 @@ impl FatVolume {
         // Read the table in large pieces: a 64 GB card has millions of entries.
         let mut cluster: u32 = 0;
         while cluster < last {
-            let Some(bytes) = source.bytes_at(self.fat_offset + u64::from(cluster) * width, 1 << 20) else { break };
+            let Some(bytes) =
+                source.bytes_at(self.fat_offset + u64::from(cluster) * width, 1 << 20)
+            else {
+                break;
+            };
             let entries = bytes.len() / width as usize;
             if entries == 0 {
                 break;
@@ -276,7 +311,12 @@ impl FatVolume {
         ranges
     }
 
-    fn scan(&self, source: &dyn ByteSource, r: &mut Reader, cancelled: &dyn Fn() -> bool) -> DirectoryScan {
+    fn scan(
+        &self,
+        source: &dyn ByteSource,
+        r: &mut Reader,
+        cancelled: &dyn Fn() -> bool,
+    ) -> DirectoryScan {
         let allocated = self.allocated(source, r);
         let mut result = DirectoryScan {
             format: self.format_name(),
@@ -288,7 +328,16 @@ impl FatVolume {
         if self.kind == FatKind::Fat32 {
             queue.push((self.root_cluster, "/".into(), false, 0));
         } else if let Some(root) = r.bytes(self.root_offset, (self.root_entries * 32) as usize) {
-            self.visit(&root, "/", false, 0, &allocated, &mut result.files, &mut queue, &mut entries_read);
+            self.visit(
+                &root,
+                "/",
+                false,
+                0,
+                &allocated,
+                &mut result.files,
+                &mut queue,
+                &mut entries_read,
+            );
         }
         while let Some((cluster, path, deleted, depth)) = queue.pop() {
             if cancelled() {
@@ -297,14 +346,30 @@ impl FatVolume {
             if !visited.insert(cluster) {
                 continue;
             }
-            let bytes = if deleted { self.deleted_folder(cluster, r) } else { self.chain(cluster, r) };
-            self.visit(&bytes, &path, deleted, depth, &allocated, &mut result.files, &mut queue, &mut entries_read);
+            let bytes = if deleted {
+                self.deleted_folder(cluster, r)
+            } else {
+                self.chain(cluster, r)
+            };
+            self.visit(
+                &bytes,
+                &path,
+                deleted,
+                depth,
+                &allocated,
+                &mut result.files,
+                &mut queue,
+                &mut entries_read,
+            );
         }
         result.allocated = allocated;
         result
     }
 
-    #[allow(clippy::too_many_arguments, reason = "one folder's walk needs the whole scan's state")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one folder's walk needs the whole scan's state"
+    )]
     fn visit(
         &self,
         entries: &[u8],
@@ -319,7 +384,7 @@ impl FatVolume {
         // Short entries with the long name entries stored before each.
         let mut records: Vec<(&[u8], LongName)> = Vec::new();
         let mut long_name: LongName = Vec::new();
-        for entry in entries.chunks_exact(32) {
+        for entry in entries.as_chunks::<32>().0 {
             if *entries_read >= 500_000 || entry[0] == 0x00 {
                 break;
             }
@@ -327,10 +392,14 @@ impl FatVolume {
             if entry[11] == 0x0F {
                 long_name.push((entry[13], long_name_characters(entry)));
             } else {
-                records.push((entry, std::mem::take(&mut long_name)));
+                records.push((entry.as_slice(), std::mem::take(&mut long_name)));
             }
         }
-        let live_names: Vec<String> = records.iter().filter(|(e, _)| e[0] != 0xE5).map(|(e, _)| short_name(e)).collect();
+        let live_names: Vec<String> = records
+            .iter()
+            .filter(|(e, _)| e[0] != 0xE5)
+            .map(|(e, _)| short_name(e))
+            .collect();
 
         for (entry, long_name) in records {
             let attributes = entry[11];
@@ -354,13 +423,25 @@ impl FatVolume {
                 }
             });
             let low = u32::from(u16::from_le_bytes([entry[26], entry[27]]));
-            let high = if self.kind == FatKind::Fat32 { u32::from(u16::from_le_bytes([entry[20], entry[21]])) << 16 } else { 0 };
+            let high = if self.kind == FatKind::Fat32 {
+                u32::from(u16::from_le_bytes([entry[20], entry[21]])) << 16
+            } else {
+                0
+            };
             let cluster = high | low;
-            let size = u64::from(u32::from_le_bytes([entry[28], entry[29], entry[30], entry[31]]));
-            let modified = fat_date(u16::from_le_bytes([entry[24], entry[25]]), u16::from_le_bytes([entry[22], entry[23]]));
+            let size = u64::from(u32::from_le_bytes([
+                entry[28], entry[29], entry[30], entry[31],
+            ]));
+            let modified = fat_date(
+                u16::from_le_bytes([entry[24], entry[25]]),
+                u16::from_le_bytes([entry[22], entry[23]]),
+            );
 
             if attributes & 0x10 != 0 {
-                if self.is_cluster(cluster) && depth < 32 && !SKIPPED_FOLDERS.contains(&name.as_str()) {
+                if self.is_cluster(cluster)
+                    && depth < 32
+                    && !SKIPPED_FOLDERS.contains(&name.as_str())
+                {
                     queue.push((cluster, format!("{path}{name}/"), deleted, depth + 1));
                 }
                 continue;
@@ -386,7 +467,10 @@ impl FatVolume {
                 id: 0,
                 format: None,
                 kind: Kind::guess(&name),
-                extents: vec![Extent { offset: start, length }],
+                extents: vec![Extent {
+                    offset: start,
+                    length,
+                }],
                 name: Some(name),
                 folder: Some(path.to_string()),
                 date: modified,
@@ -403,9 +487,13 @@ impl FatVolume {
         let mut cluster = start;
         let mut seen = HashSet::new();
         while self.is_cluster(cluster) && seen.insert(cluster) && bytes.len() < 8 << 20 {
-            let Some(data) = r.bytes(self.offset_of(cluster), self.cluster_size as usize) else { break };
+            let Some(data) = r.bytes(self.offset_of(cluster), self.cluster_size as usize) else {
+                break;
+            };
             bytes.extend_from_slice(&data);
-            let Some(next) = self.entry(cluster, r) else { break };
+            let Some(next) = self.entry(cluster, r) else {
+                break;
+            };
             cluster = next;
         }
         bytes
@@ -417,8 +505,12 @@ impl FatVolume {
         let mut bytes: Vec<u8> = Vec::new();
         let mut cluster = start;
         while self.is_cluster(cluster) && bytes.len() < 1 << 20 {
-            let Some(data) = r.bytes(self.offset_of(cluster), self.cluster_size as usize) else { break };
-            let plausible = data.len() >= 32 && (data[0] == 0xE5 || data[0] >= 0x20) && (data[11] == 0x0F || data[11] & 0xC0 == 0);
+            let Some(data) = r.bytes(self.offset_of(cluster), self.cluster_size as usize) else {
+                break;
+            };
+            let plausible = data.len() >= 32
+                && (data[0] == 0xE5 || data[0] >= 0x20)
+                && (data[11] == 0x0F || data[11] & 0xC0 == 0);
             if !bytes.is_empty() && !plausible {
                 break;
             }
@@ -437,7 +529,9 @@ fn short_name(entry: &[u8]) -> String {
         base[0] = 0xE5;
     }
     let mut name = String::from_utf8_lossy(&base).trim_end().to_string();
-    let mut ext = String::from_utf8_lossy(&entry[8..11]).trim_end().to_string();
+    let mut ext = String::from_utf8_lossy(&entry[8..11])
+        .trim_end()
+        .to_string();
     if entry.len() > 12 {
         if entry[12] & 0x08 != 0 {
             name = name.to_lowercase();
@@ -446,11 +540,17 @@ fn short_name(entry: &[u8]) -> String {
             ext = ext.to_lowercase();
         }
     }
-    if ext.is_empty() { name } else { format!("{name}.{ext}") }
+    if ext.is_empty() {
+        name
+    } else {
+        format!("{name}.{ext}")
+    }
 }
 
 /// Camera file names, for putting back a lost first letter.
-const CAMERA_PREFIXES: [&str; 10] = ["IMG_", "DSC_", "DSCF", "DSCN", "MVI_", "VID_", "GOPR", "PXL_", "DJI_", "MOV_"];
+const CAMERA_PREFIXES: [&str; 10] = [
+    "IMG_", "DSC_", "DSCF", "DSCN", "MVI_", "VID_", "GOPR", "PXL_", "DJI_", "MOV_",
+];
 
 /// `_MG_0002.JPG` next to `IMG_0001.JPG` was `IMG_0002.JPG`. Siblings sharing
 /// the next three letters decide; failing that, the usual camera prefixes;
@@ -466,7 +566,12 @@ pub fn restore_first_letter(name: &str, siblings: &[String]) -> String {
         .filter(|s| s.chars().count() == name.chars().count())
         .filter_map(|sibling| {
             let first = sibling.chars().next()?;
-            let next: String = sibling.chars().skip(1).take(3).collect::<String>().to_lowercase();
+            let next: String = sibling
+                .chars()
+                .skip(1)
+                .take(3)
+                .collect::<String>()
+                .to_lowercase();
             (first != '_' && next == probe).then_some(first)
         })
         .collect();
@@ -479,7 +584,14 @@ pub fn restore_first_letter(name: &str, siblings: &[String]) -> String {
     if let Some(prefix) = CAMERA_PREFIXES.iter().find(|p| upper.starts_with(&p[1..])) {
         let letter = &prefix[..1];
         let lowercase = rest.chars().next().is_some_and(char::is_lowercase);
-        return format!("{}{rest}", if lowercase { letter.to_lowercase() } else { letter.to_string() });
+        return format!(
+            "{}{rest}",
+            if lowercase {
+                letter.to_lowercase()
+            } else {
+                letter.to_string()
+            }
+        );
     }
     name.to_string()
 }
@@ -487,7 +599,14 @@ pub fn restore_first_letter(name: &str, siblings: &[String]) -> String {
 fn long_name_characters(entry: &[u8]) -> Vec<u16> {
     [1..11, 14..26, 28..32]
         .into_iter()
-        .flat_map(|range| entry[range].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect::<Vec<_>>())
+        .flat_map(|range| {
+            entry[range]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair))
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 
@@ -506,14 +625,20 @@ fn assemble_name(entry: &[u8], long_name: &LongName, erased: bool) -> Option<Str
             .map(|c| c.to_ascii_uppercase())
             .filter(char::is_ascii)
             .map(|c| c as u8);
-        let candidates = hint.into_iter().chain(*b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$%'-@~!(){}^#&");
+        let candidates = hint
+            .into_iter()
+            .chain(*b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$%'-@~!(){}^#&");
         let letter = candidates.into_iter().find(|candidate| {
             raw[0] = *candidate;
             short_checksum(&raw) == checksum
         })?;
         raw[0] = letter;
     }
-    if long_name.is_empty() || !long_name.iter().all(|(checksum, _)| *checksum == short_checksum(&raw)) {
+    if long_name.is_empty()
+        || !long_name
+            .iter()
+            .all(|(checksum, _)| *checksum == short_checksum(&raw))
+    {
         if !erased {
             return None;
         }
@@ -532,7 +657,9 @@ fn assemble_name(entry: &[u8], long_name: &LongName, erased: bool) -> Option<Str
 }
 
 fn short_checksum(name: &[u8]) -> u8 {
-    name.iter().take(11).fold(0u8, |sum, byte| ((sum & 1) << 7 | sum >> 1).wrapping_add(*byte))
+    name.iter().take(11).fold(0u8, |sum, byte| {
+        ((sum & 1) << 7 | sum >> 1).wrapping_add(*byte)
+    })
 }
 
 // MARK: exFAT
@@ -583,14 +710,19 @@ impl ExFatVolume {
             return Vec::new();
         }
         if contiguous {
-            return (0..needed as u32).map(|i| first + i).filter(|c| self.is_cluster(*c)).collect();
+            return (0..needed as u32)
+                .map(|i| first + i)
+                .filter(|c| self.is_cluster(*c))
+                .collect();
         }
         let mut chain = Vec::new();
         let mut cluster = first;
         let mut seen = HashSet::new();
         while chain.len() < needed && self.is_cluster(cluster) && seen.insert(cluster) {
             chain.push(cluster);
-            let Some(next) = r.u32le(self.fat_offset + u64::from(cluster) * 4) else { break };
+            let Some(next) = r.u32le(self.fat_offset + u64::from(cluster) * 4) else {
+                break;
+            };
             cluster = next;
         }
         chain
@@ -608,7 +740,10 @@ impl ExFatVolume {
             let start = self.offset_of(*cluster);
             match extents.last_mut() {
                 Some(last) if last.end() == start => last.length += take,
-                _ => extents.push(Extent { offset: start, length: take }),
+                _ => extents.push(Extent {
+                    offset: start,
+                    length: take,
+                }),
             }
             remaining -= take;
         }
@@ -627,7 +762,9 @@ impl ExFatVolume {
             if cancelled() {
                 break;
             }
-            let Some(first) = clusters.first() else { continue };
+            let Some(first) = clusters.first() else {
+                continue;
+            };
             if !visited.insert(*first) {
                 continue;
             }
@@ -636,12 +773,18 @@ impl ExFatVolume {
                 if bytes.len() >= 64 << 20 {
                     break;
                 }
-                let Some(data) = r.bytes(self.offset_of(*cluster), self.cluster_size as usize) else { break };
+                let Some(data) = r.bytes(self.offset_of(*cluster), self.cluster_size as usize)
+                else {
+                    break;
+                };
                 bytes.extend_from_slice(&data);
             }
             let le16 = |b: &[u8], at: usize| u16::from_le_bytes([b[at], b[at + 1]]);
-            let le32 = |b: &[u8], at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
-            let le64 = |b: &[u8], at: usize| u64::from_le_bytes(b[at..at + 8].try_into().unwrap_or_default());
+            let le32 =
+                |b: &[u8], at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+            let le64 = |b: &[u8], at: usize| {
+                u64::from_le_bytes(b[at..at + 8].try_into().unwrap_or_default())
+            };
             let mut index = 0;
             while index + 32 <= bytes.len() && entries_read < 500_000 {
                 let kind = bytes[index];
@@ -653,7 +796,10 @@ impl ExFatVolume {
                     let start = le32(&bytes, index + 20);
                     let length = le64(&bytes, index + 24);
                     for cluster in self.clusters(start, length, true, r) {
-                        bitmap.extend(r.bytes(self.offset_of(cluster), self.cluster_size as usize).unwrap_or_default());
+                        bitmap.extend(
+                            r.bytes(self.offset_of(cluster), self.cluster_size as usize)
+                                .unwrap_or_default(),
+                        );
                     }
                     bitmap.truncate(length as usize);
                 }
@@ -663,7 +809,10 @@ impl ExFatVolume {
                     continue;
                 }
                 let secondary = usize::from(bytes[index + 1]);
-                if secondary < 2 || index + 32 * (secondary + 1) > bytes.len() || bytes[index + 32] & 0x7F != 0x40 {
+                if secondary < 2
+                    || index + 32 * (secondary + 1) > bytes.len()
+                    || bytes[index + 32] & 0x7F != 0x40
+                {
                     index += 32;
                     continue;
                 }
@@ -690,13 +839,25 @@ impl ExFatVolume {
                     continue;
                 }
                 if attributes & 0x10 != 0 {
-                    if depth < 32 && !SKIPPED_FOLDERS.contains(&name.as_str()) && self.is_cluster(first_cluster) {
-                        let chain = self.clusters(first_cluster, data_length.max(self.cluster_size), contiguous, r);
+                    if depth < 32
+                        && !SKIPPED_FOLDERS.contains(&name.as_str())
+                        && self.is_cluster(first_cluster)
+                    {
+                        let chain = self.clusters(
+                            first_cluster,
+                            data_length.max(self.cluster_size),
+                            contiguous,
+                            r,
+                        );
                         queue.push((chain, format!("{path}{name}/"), deleted, depth + 1));
                     }
                     continue;
                 }
-                if !deleted || data_length == 0 || !self.is_cluster(first_cluster) || is_noise(&name) {
+                if !deleted
+                    || data_length == 0
+                    || !self.is_cluster(first_cluster)
+                    || is_noise(&name)
+                {
                     continue;
                 }
                 // A deleted file's FAT chain may already be reused; trust it
@@ -718,7 +879,11 @@ impl ExFatVolume {
                     name: Some(name),
                     folder: Some(path.clone()),
                     date: fat_date((modified >> 16) as u16, (modified & 0xFFFF) as u16),
-                    condition: if recovered < data_length { Condition::Damaged } else { Condition::Good },
+                    condition: if recovered < data_length {
+                        Condition::Damaged
+                    } else {
+                        Condition::Good
+                    },
                     details: Details::default(),
                     origin: Origin::Directory,
                 });
@@ -738,7 +903,12 @@ impl ExFatVolume {
             }
         }
         for file in &mut files {
-            if file.condition == Condition::Good && file.extents.iter().any(|e| overlaps(e.offset..e.end(), &allocated)) {
+            if file.condition == Condition::Good
+                && file
+                    .extents
+                    .iter()
+                    .any(|e| overlaps(e.offset..e.end(), &allocated))
+            {
                 file.condition = Condition::Overwritten;
             }
         }

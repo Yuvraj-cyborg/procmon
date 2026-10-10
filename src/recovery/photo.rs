@@ -62,7 +62,8 @@ pub fn jpeg(r: &mut Reader, start: u64) -> Option<Carved> {
         match marker {
             0xD9 => {
                 let frame = frame?;
-                return scanned.then(|| Carved::new(Format::Jpeg, position + 2 - start).pixels(frame));
+                return scanned
+                    .then(|| Carved::new(Format::Jpeg, position + 2 - start).pixels(frame));
             }
             // Another image starts here: this one never finished.
             0xD8 => return jpeg_damaged(frame, scanned, position - start),
@@ -72,7 +73,8 @@ pub fn jpeg(r: &mut Reader, start: u64) -> Option<Carved> {
                     return jpeg_damaged(frame, scanned, position - start);
                 };
                 if is_frame(marker)
-                    && let (Some(height), Some(width)) = (r.u16be(position + 5), r.u16be(position + 7))
+                    && let (Some(height), Some(width)) =
+                        (r.u16be(position + 5), r.u16be(position + 7))
                 {
                     frame = Some((u32::from(width), u32::from(height)));
                 }
@@ -84,7 +86,8 @@ pub fn jpeg(r: &mut Reader, start: u64) -> Option<Carved> {
                         None => {
                             // Nothing but zeros or unreadable space follows: the
                             // picture ends where the data does.
-                            let end = first_zero_sector(r, position, start, limit).unwrap_or(position);
+                            let end =
+                                first_zero_sector(r, position, start, limit).unwrap_or(position);
                             return jpeg_damaged(frame, scanned, end - start);
                         }
                     }
@@ -139,7 +142,10 @@ fn next_marker(r: &mut Reader, offset: u64, limit: u64) -> Option<u64> {
 const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
 pub fn png(r: &mut Reader, start: u64) -> Option<Carved> {
-    if !r.matches(&PNG_SIGNATURE, start) || r.u32be(start + 8) != Some(13) || !r.ascii("IHDR", start + 12) {
+    if !r.matches(&PNG_SIGNATURE, start)
+        || r.u32be(start + 8) != Some(13)
+        || !r.ascii("IHDR", start + 12)
+    {
         return None;
     }
     let width = r.u32be(start + 16).filter(|w| (1..=100_000).contains(w))?;
@@ -148,18 +154,30 @@ pub fn png(r: &mut Reader, start: u64) -> Option<Carved> {
     let mut position = start + 8;
     let mut saw_data = false;
     while position + 12 <= limit {
-        let Some(length) = r.u32be(position).filter(|l| *l <= 0x7FFF_FFFF) else { break };
-        let Some(kind) = r.bytes(position + 4, 4).filter(|t| t.iter().all(u8::is_ascii_alphabetic)) else {
+        let Some(length) = r.u32be(position).filter(|l| *l <= 0x7FFF_FFFF) else {
+            break;
+        };
+        let Some(kind) = r
+            .bytes(position + 4, 4)
+            .filter(|t| t.iter().all(u8::is_ascii_alphabetic))
+        else {
             break;
         };
         position += 12 + u64::from(length);
         match kind.as_slice() {
             b"IDAT" => saw_data = true,
-            b"IEND" => return saw_data.then(|| Carved::new(Format::Png, position - start).pixels((width, height))),
+            b"IEND" => {
+                return saw_data
+                    .then(|| Carved::new(Format::Png, position - start).pixels((width, height)));
+            }
             _ => {}
         }
     }
-    saw_data.then(|| Carved::new(Format::Png, position.min(limit) - start).pixels((width, height)).damaged())
+    saw_data.then(|| {
+        Carved::new(Format::Png, position.min(limit) - start)
+            .pixels((width, height))
+            .damaged()
+    })
 }
 
 // MARK: GIF
@@ -176,7 +194,11 @@ pub fn gif(r: &mut Reader, start: u64) -> Option<Carved> {
     let mut position = start + 13 + color_table_size(flags);
     let mut images = 0;
     let incomplete = |images: usize, position: u64| {
-        (images > 0).then(|| Carved::new(Format::Gif, position - start).pixels(pixels).damaged())
+        (images > 0).then(|| {
+            Carved::new(Format::Gif, position - start)
+                .pixels(pixels)
+                .damaged()
+        })
     };
     while position < limit {
         let Some(block) = r.byte(position) else { break };
@@ -196,7 +218,10 @@ pub fn gif(r: &mut Reader, start: u64) -> Option<Carved> {
                 };
                 position = next;
             }
-            0x3B => return (images > 0).then(|| Carved::new(Format::Gif, position + 1 - start).pixels(pixels)),
+            0x3B => {
+                return (images > 0)
+                    .then(|| Carved::new(Format::Gif, position + 1 - start).pixels(pixels));
+            }
             _ => return incomplete(images, position),
         }
     }
@@ -204,7 +229,11 @@ pub fn gif(r: &mut Reader, start: u64) -> Option<Carved> {
 }
 
 fn color_table_size(flags: u8) -> u64 {
-    if flags & 0x80 == 0 { 0 } else { 3 << (u64::from(flags & 0x07) + 1) }
+    if flags & 0x80 == 0 {
+        0
+    } else {
+        3 << (u64::from(flags & 0x07) + 1)
+    }
 }
 
 fn skip_sub_blocks(r: &mut Reader, offset: u64, limit: u64) -> Option<u64> {
@@ -239,7 +268,10 @@ pub fn bmp(r: &mut Reader, start: u64) -> Option<Carved> {
     let core = header == 12;
     let signed = |value: u32| i64::from(value as i32);
     let (width, height) = if core {
-        (i64::from(r.u16le(start + 18)?), i64::from(r.u16le(start + 20)?))
+        (
+            i64::from(r.u16le(start + 18)?),
+            i64::from(r.u16le(start + 20)?),
+        )
     } else {
         (signed(r.u32le(start + 18)?), signed(r.u32le(start + 22)?))
     };
@@ -254,7 +286,11 @@ pub fn bmp(r: &mut Reader, start: u64) -> Option<Carved> {
         return None;
     }
     // Uncompressed pixels must fit in the file the header claims.
-    let compression = if core { 0 } else { r.u32le(start + 30).unwrap_or(0) };
+    let compression = if core {
+        0
+    } else {
+        r.u32le(start + 30).unwrap_or(0)
+    };
     if compression == 0 {
         let row = (width as u64 * u64::from(depth)).div_ceil(32) * 4;
         if row * height as u64 > u64::from(size - data_offset) {
@@ -279,10 +315,20 @@ pub fn tiff(r: &mut Reader, start: u64) -> Option<Carved> {
     };
     let limit = r.size().checked_sub(start)?.min(IMAGE_LIMIT);
     let u16_at = |r: &mut Reader, offset: u64| {
-        if little { r.u16le(start + offset) } else { r.u16be(start + offset) }.map(u64::from)
+        if little {
+            r.u16le(start + offset)
+        } else {
+            r.u16be(start + offset)
+        }
+        .map(u64::from)
     };
     let u32_at = |r: &mut Reader, offset: u64| {
-        if little { r.u32le(start + offset) } else { r.u32be(start + offset) }.map(u64::from)
+        if little {
+            r.u32le(start + offset)
+        } else {
+            r.u32be(start + offset)
+        }
+        .map(u64::from)
     };
     let values = |r: &mut Reader, kind: u64, count: u64, offset: u64| -> Vec<u64> {
         let wide = kind == 4 || kind == 13;
@@ -290,7 +336,13 @@ pub fn tiff(r: &mut Reader, start: u64) -> Option<Carved> {
             return Vec::new();
         }
         (0..count)
-            .filter_map(|i| if wide { u32_at(r, offset + i * 4) } else { u16_at(r, offset + i * 2) })
+            .filter_map(|i| {
+                if wide {
+                    u32_at(r, offset + i * 4)
+                } else {
+                    u16_at(r, offset + i * 2)
+                }
+            })
             .collect()
     };
     let first = u32_at(r, 4).filter(|f| *f >= 8 && *f < limit)?;
@@ -306,10 +358,13 @@ pub fn tiff(r: &mut Reader, start: u64) -> Option<Carved> {
     let mut is_dng = false;
     let mut size = (0u64, 0u64);
     while let Some(directory) = queue.pop() {
-        if visited.len() >= 64 || directory < 8 || directory >= limit || !visited.insert(directory) {
+        if visited.len() >= 64 || directory < 8 || directory >= limit || !visited.insert(directory)
+        {
             continue;
         }
-        let Some(count) = u16_at(r, directory).filter(|c| (1..=2_000).contains(c)) else { continue };
+        let Some(count) = u16_at(r, directory).filter(|c| (1..=2_000).contains(c)) else {
+            continue;
+        };
         end = end.max(directory + 2 + count * 12 + 4);
         let mut offsets = Vec::new();
         let mut lengths = Vec::new();
@@ -317,7 +372,8 @@ pub fn tiff(r: &mut Reader, start: u64) -> Option<Carved> {
         let mut dimensions = (0, 0);
         for index in 0..count {
             let entry = directory + 2 + index * 12;
-            let (Some(tag), Some(kind), Some(number)) = (u16_at(r, entry), u16_at(r, entry + 2), u32_at(r, entry + 4))
+            let (Some(tag), Some(kind), Some(number)) =
+                (u16_at(r, entry), u16_at(r, entry + 2), u32_at(r, entry + 4))
             else {
                 continue;
             };
@@ -332,7 +388,11 @@ pub fn tiff(r: &mut Reader, start: u64) -> Option<Carved> {
             if unit == 0 || bytes > limit {
                 continue;
             }
-            let value_offset = if bytes <= 4 { entry + 8 } else { u32_at(r, entry + 8).unwrap_or(0) };
+            let value_offset = if bytes <= 4 {
+                entry + 8
+            } else {
+                u32_at(r, entry + 8).unwrap_or(0)
+            };
             if bytes > 4 {
                 if value_offset + bytes > limit {
                     continue;
@@ -340,11 +400,24 @@ pub fn tiff(r: &mut Reader, start: u64) -> Option<Carved> {
                 end = end.max(value_offset + bytes);
             }
             match tag {
-                0x100 => dimensions.0 = values(r, kind, 1, value_offset).first().copied().unwrap_or(0),
-                0x101 => dimensions.1 = values(r, kind, 1, value_offset).first().copied().unwrap_or(0),
+                0x100 => {
+                    dimensions.0 = values(r, kind, 1, value_offset)
+                        .first()
+                        .copied()
+                        .unwrap_or(0)
+                }
+                0x101 => {
+                    dimensions.1 = values(r, kind, 1, value_offset)
+                        .first()
+                        .copied()
+                        .unwrap_or(0)
+                }
                 0x10F => {
-                    let text = r.bytes(start + value_offset, bytes.min(64) as usize).unwrap_or_default();
-                    make = String::from_utf8_lossy(text.split(|b| *b == 0).next().unwrap_or(&[])).into_owned();
+                    let text = r
+                        .bytes(start + value_offset, bytes.min(64) as usize)
+                        .unwrap_or_default();
+                    make = String::from_utf8_lossy(text.split(|b| *b == 0).next().unwrap_or(&[]))
+                        .into_owned();
                 }
                 0x111 | 0x144 => offsets = values(r, kind, number, value_offset),
                 0x117 | 0x145 => lengths = values(r, kind, number, value_offset),

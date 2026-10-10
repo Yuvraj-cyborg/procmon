@@ -14,7 +14,10 @@ pub const ZIP_LIMIT: u64 = 4 << 30;
 /// A PDF ends at `%%EOF`; an edited one appends more objects and another
 /// `%%EOF`, so the search goes on while what follows still looks like PDF.
 pub fn pdf(r: &mut Reader, start: u64) -> Option<Carved> {
-    if !r.ascii("%PDF-", start) || !matches!(r.byte(start + 5), Some(b'1' | b'2')) || r.byte(start + 6) != Some(b'.') {
+    if !r.ascii("%PDF-", start)
+        || !matches!(r.byte(start + 5), Some(b'1' | b'2'))
+        || r.byte(start + 6) != Some(b'.')
+    {
         return None;
     }
     let limit = r.size().min(start + PDF_LIMIT);
@@ -71,8 +74,11 @@ pub fn zip(r: &mut Reader, start: u64) -> Option<Carved> {
     let mut position = start + 30;
     while let Some(record) = r.find(&CENTRAL_END, position, limit) {
         position = record + 4;
-        let (Some(size), Some(offset), Some(comment)) = (r.u32le(record + 12), r.u32le(record + 16), r.u16le(record + 20))
-        else {
+        let (Some(size), Some(offset), Some(comment)) = (
+            r.u32le(record + 12),
+            r.u32le(record + 16),
+            r.u16le(record + 20),
+        ) else {
             continue;
         };
         let directory = if offset == u32::MAX || size == u32::MAX {
@@ -82,7 +88,9 @@ pub fn zip(r: &mut Reader, start: u64) -> Option<Carved> {
         } else {
             None
         };
-        let Some((offset, size)) = directory else { continue };
+        let Some((offset, size)) = directory else {
+            continue;
+        };
         let length = record + 22 + u64::from(comment) - start;
         return Some(Carved::new(classify(r, start + offset, size), length));
     }
@@ -108,9 +116,15 @@ fn zip64_directory(r: &mut Reader, start: u64, record: u64) -> Option<(u64, u64)
 fn classify(r: &mut Reader, directory: u64, size: u64) -> Format {
     let mut position = directory;
     let mut names = Vec::new();
-    while position + 46 <= directory + size && names.len() < 2_000 && r.matches(&[0x50, 0x4B, 0x01, 0x02], position) {
-        let (Some(name), Some(extra), Some(comment)) = (r.u16le(position + 28), r.u16le(position + 30), r.u16le(position + 32))
-        else {
+    while position + 46 <= directory + size
+        && names.len() < 2_000
+        && r.matches(&[0x50, 0x4B, 0x01, 0x02], position)
+    {
+        let (Some(name), Some(extra), Some(comment)) = (
+            r.u16le(position + 28),
+            r.u16le(position + 30),
+            r.u16le(position + 32),
+        ) else {
             break;
         };
         if let Some(bytes) = r.bytes(position + 46, usize::from(name)) {
@@ -125,7 +139,9 @@ fn classify(r: &mut Reader, directory: u64, size: u64) -> Format {
         Format::Xlsx
     } else if has_prefix("ppt/") {
         Format::Pptx
-    } else if names.iter().any(|n| n == "mimetype") && names.iter().any(|n| n == "META-INF/container.xml") {
+    } else if names.iter().any(|n| n == "mimetype")
+        && names.iter().any(|n| n == "META-INF/container.xml")
+    {
         Format::Epub
     } else {
         Format::Zip

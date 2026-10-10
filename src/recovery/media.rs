@@ -18,9 +18,9 @@ pub const AUDIO_LIMIT: u64 = 512 << 20;
 /// Top-level boxes seen in real files. Anything else after a complete file
 /// belongs to whatever was written next on the disk.
 const KNOWN_BOXES: [&[u8; 4]; 24] = [
-    b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide", b"uuid", b"meta", b"pdin", b"moof", b"mfra",
-    b"sidx", b"ssix", b"prft", b"emsg", b"styp", b"pnot", b"PICT", b"junk", b"udta", b"XMP_", b"beam",
-    b"jumb", b"ID32",
+    b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide", b"uuid", b"meta", b"pdin", b"moof",
+    b"mfra", b"sidx", b"ssix", b"prft", b"emsg", b"styp", b"pnot", b"PICT", b"junk", b"udta",
+    b"XMP_", b"beam", b"jumb", b"ID32",
 ];
 
 pub fn iso_media(r: &mut Reader, start: u64) -> Option<Carved> {
@@ -31,19 +31,24 @@ pub fn iso_media(r: &mut Reader, start: u64) -> Option<Carved> {
     let mut brands = vec![r.bytes(start + 8, 4)?];
     let mut cursor = start + 16;
     while cursor + 4 <= start + u64::from(header) {
-        let Some(brand) = r.bytes(cursor, 4) else { break };
+        let Some(brand) = r.bytes(cursor, 4) else {
+            break;
+        };
         brands.push(brand);
         cursor += 4;
     }
     let format = classify(&brands);
     let limit = r.size().min(start + VIDEO_LIMIT);
     let mut position = start;
-    let (mut saw_movie, mut saw_data, mut saw_meta, mut saw_fragments) = (false, false, false, false);
+    let (mut saw_movie, mut saw_data, mut saw_meta, mut saw_fragments) =
+        (false, false, false, false);
     let mut details = Details::default();
     let mut date = None;
     let mut damaged = false;
     while position + 8 <= limit {
-        let (Some(size32), Some(kind)) = (r.u32be(position), r.bytes(position + 4, 4)) else { break };
+        let (Some(size32), Some(kind)) = (r.u32be(position), r.bytes(position + 4, 4)) else {
+            break;
+        };
         if !kind.iter().all(|b| (0x20..=0x7E).contains(b)) {
             break;
         }
@@ -51,7 +56,11 @@ pub fn iso_media(r: &mut Reader, start: u64) -> Option<Carved> {
         if position > start && kind == b"ftyp" {
             break;
         }
-        if complete && !KNOWN_BOXES.iter().any(|known| known.as_slice() == kind.as_slice()) {
+        if complete
+            && !KNOWN_BOXES
+                .iter()
+                .any(|known| known.as_slice() == kind.as_slice())
+        {
             break;
         }
         let size = match size32 {
@@ -134,7 +143,9 @@ fn movie_details(r: &mut Reader, start: u64, size: u64) -> (Details, Option<Time
     let mut position = start + 8;
     let mut children = 0;
     while position + 8 <= end && children < 512 {
-        let (Some(child), Some(kind)) = (r.u32be(position).map(u64::from), r.bytes(position + 4, 4)) else {
+        let (Some(child), Some(kind)) =
+            (r.u32be(position).map(u64::from), r.bytes(position + 4, 4))
+        else {
             break;
         };
         if child < 8 {
@@ -143,20 +154,30 @@ fn movie_details(r: &mut Reader, start: u64, size: u64) -> (Details, Option<Time
         match kind.as_slice() {
             b"mvhd" => {
                 let long = r.byte(position + 8) == Some(1);
-                let created = if long { r.u64be(position + 12) } else { r.u32be(position + 12).map(u64::from) };
+                let created = if long {
+                    r.u64be(position + 12)
+                } else {
+                    r.u32be(position + 12).map(u64::from)
+                };
                 let scale = r.u32be(position + if long { 28 } else { 20 });
-                let length = if long { r.u64be(position + 32) } else { r.u32be(position + 24).map(u64::from) };
+                let length = if long {
+                    r.u64be(position + 32)
+                } else {
+                    r.u32be(position + 24).map(u64::from)
+                };
                 if let (Some(scale), Some(length)) = (scale, length)
                     && scale > 0
                     && length < u64::MAX / 2
                 {
-                    details.duration = Some(Duration::from_secs_f64(length as f64 / f64::from(scale)));
+                    details.duration =
+                        Some(Duration::from_secs_f64(length as f64 / f64::from(scale)));
                 }
                 date = created.and_then(quicktime_date);
             }
             b"trak" => {
                 if let Some((width, height)) = track_size(r, position, child) {
-                    let area = |p: Option<(u32, u32)>| p.map_or(0, |(w, h)| u64::from(w) * u64::from(h));
+                    let area =
+                        |p: Option<(u32, u32)>| p.map_or(0, |(w, h)| u64::from(w) * u64::from(h));
                     if u64::from(width) * u64::from(height) > area(details.pixels) {
                         details.pixels = Some((width, height));
                     }
@@ -204,7 +225,11 @@ pub fn riff(r: &mut Reader, start: u64) -> Option<Carved> {
     let mut length = 8 + u64::from(declared) + u64::from(declared & 1);
     let carved = match form.as_slice() {
         b"WEBP" => {
-            if !["VP8 ", "VP8L", "VP8X"].iter().any(|chunk| r.ascii(chunk, start + 12)) || length > JPEG_LIMIT {
+            if !["VP8 ", "VP8L", "VP8X"]
+                .iter()
+                .any(|chunk| r.ascii(chunk, start + 12))
+                || length > JPEG_LIMIT
+            {
                 return None;
             }
             Carved::new(Format::Webp, length)
@@ -219,7 +244,9 @@ pub fn riff(r: &mut Reader, start: u64) -> Option<Carved> {
                 && r.ascii("RIFF", start + length)
                 && r.ascii("AVIX", start + length + 8)
             {
-                let Some(more) = r.u32le(start + length + 4) else { break };
+                let Some(more) = r.u32le(start + length + 4) else {
+                    break;
+                };
                 length += 8 + u64::from(more) + u64::from(more & 1);
             }
             Carved::new(Format::Avi, length)
@@ -231,8 +258,9 @@ pub fn riff(r: &mut Reader, start: u64) -> Option<Carved> {
             let rate = r.u32le(start + 28)?;
             let mut carved = Carved::new(Format::Wav, length);
             if rate > 0 {
-                carved.details.duration =
-                    Some(Duration::from_secs_f64(length.saturating_sub(44) as f64 / f64::from(rate)));
+                carved.details.duration = Some(Duration::from_secs_f64(
+                    length.saturating_sub(44) as f64 / f64::from(rate),
+                ));
             }
             carved
         }
@@ -246,14 +274,26 @@ fn fit(carved: Carved, r: &Reader, start: u64) -> Carved {
     if start + carved.length <= r.size() {
         return carved;
     }
-    Carved { length: r.size() - start, ..carved }.damaged()
+    Carved {
+        length: r.size() - start,
+        ..carved
+    }
+    .damaged()
 }
 
 // MARK: Matroska and WebM
 
 const SEGMENT_CHILDREN: [u64; 10] = [
-    0x114D_9B74, 0x1549_A966, 0x1654_AE6B, 0x1F43_B675, 0x1C53_BB6B, 0x1043_A770, 0x1254_C367, 0x1941_A469,
-    0xEC, 0xBF,
+    0x114D_9B74,
+    0x1549_A966,
+    0x1654_AE6B,
+    0x1F43_B675,
+    0x1C53_BB6B,
+    0x1043_A770,
+    0x1254_C367,
+    0x1941_A469,
+    0xEC,
+    0xBF,
 ];
 const CLUSTER: u64 = 0x1F43_B675;
 
@@ -266,12 +306,19 @@ pub fn matroska(r: &mut Reader, start: u64) -> Option<Carved> {
     let mut doc_type = None;
     let mut position = start + 4 + header.width;
     while position < header_end {
-        let Some((id, id_width)) = element_id(r, position) else { break };
-        let Some(element) = ebml_size(r, position + id_width) else { break };
+        let Some((id, id_width)) = element_id(r, position) else {
+            break;
+        };
+        let Some(element) = ebml_size(r, position + id_width) else {
+            break;
+        };
         let data = position + id_width + element.width;
         if id == 0x4282 && element.value < 32 {
             let bytes = r.bytes(data, element.value as usize)?;
-            doc_type = Some(String::from_utf8_lossy(bytes.split(|b| *b == 0).next().unwrap_or(&[])).into_owned());
+            doc_type = Some(
+                String::from_utf8_lossy(bytes.split(|b| *b == 0).next().unwrap_or(&[]))
+                    .into_owned(),
+            );
         }
         position = data + element.value;
     }
@@ -287,16 +334,24 @@ pub fn matroska(r: &mut Reader, start: u64) -> Option<Carved> {
     let body = header_end + 4 + segment.width;
     let limit = r.size().min(start + VIDEO_LIMIT);
     if !segment.unknown {
-        return Some(fit(Carved::new(format, body + segment.value - start), r, start));
+        return Some(fit(
+            Carved::new(format, body + segment.value - start),
+            r,
+            start,
+        ));
     }
     // A live recording leaves the size open: walk the segment until
     // something that cannot belong to it.
     position = body;
     while position < limit {
-        let Some((id, id_width)) = element_id(r, position).filter(|(id, _)| SEGMENT_CHILDREN.contains(id)) else {
+        let Some((id, id_width)) =
+            element_id(r, position).filter(|(id, _)| SEGMENT_CHILDREN.contains(id))
+        else {
             break;
         };
-        let Some(element) = ebml_size(r, position + id_width) else { break };
+        let Some(element) = ebml_size(r, position + id_width) else {
+            break;
+        };
         let data = position + id_width + element.width;
         if element.unknown {
             if id != CLUSTER {
@@ -315,8 +370,12 @@ fn end_of_open_cluster(r: &mut Reader, offset: u64, limit: u64) -> u64 {
     const CHILDREN: [u64; 7] = [0xE7, 0xA3, 0xA0, 0xA7, 0xAB, 0xEC, 0xBF];
     let mut position = offset;
     while position < limit {
-        let Some((id, width)) = element_id(r, position) else { break };
-        let Some(element) = ebml_size(r, position + width).filter(|e| CHILDREN.contains(&id) && !e.unknown) else {
+        let Some((id, width)) = element_id(r, position) else {
+            break;
+        };
+        let Some(element) =
+            ebml_size(r, position + width).filter(|e| CHILDREN.contains(&id) && !e.unknown)
+        else {
             return position;
         };
         position += width + element.width + element.value;
@@ -347,7 +406,9 @@ fn ebml_size(r: &mut Reader, offset: u64) -> Option<EbmlSize> {
     let width = u64::from(first.leading_zeros()) + 1;
     let bytes = r.bytes(offset, width as usize)?;
     let mask = if width == 8 { 0 } else { 0xFFu64 >> width };
-    let value = bytes[1..].iter().fold(u64::from(first) & mask, |v, b| v << 8 | u64::from(*b));
+    let value = bytes[1..]
+        .iter()
+        .fold(u64::from(first) & mask, |v, b| v << 8 | u64::from(*b));
     Some(EbmlSize {
         value,
         width,
@@ -365,10 +426,18 @@ pub struct MpegFrame {
 }
 
 const BITRATES: [[u32; 15]; 5] = [
-    [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
-    [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
-    [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
-    [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],
+    [
+        0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448,
+    ],
+    [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384,
+    ],
+    [
+        0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
+    ],
+    [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256,
+    ],
     [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
 ];
 
@@ -385,15 +454,30 @@ impl MpegFrame {
             return None;
         }
         let mpeg1 = version == 3;
-        let table = if mpeg1 { 3 - layer } else if layer == 3 { 3 } else { 4 };
+        let table = if mpeg1 {
+            3 - layer
+        } else if layer == 3 {
+            3
+        } else {
+            4
+        };
         let bitrate = BITRATES[table][bitrate_index] * 1000;
-        let shift = if mpeg1 { 0 } else if version == 2 { 1 } else { 2 };
+        let shift = if mpeg1 {
+            0
+        } else if version == 2 {
+            1
+        } else {
+            2
+        };
         let rate = [44_100, 48_000, 32_000][rate_index] >> shift;
         let padding = header >> 9 & 1;
         let (length, samples) = match layer {
             3 => ((12 * bitrate / rate + padding) * 4, 384),
             2 => (144 * bitrate / rate + padding, 1152),
-            _ => ((if mpeg1 { 144 } else { 72 }) * bitrate / rate + padding, if mpeg1 { 1152 } else { 576 }),
+            _ => (
+                (if mpeg1 { 144 } else { 72 }) * bitrate / rate + padding,
+                if mpeg1 { 1152 } else { 576 },
+            ),
         };
         Some(Self {
             length: u64::from(length),
@@ -410,7 +494,9 @@ pub fn mp3(r: &mut Reader, start: u64) -> Option<Carved> {
     let tagged = r.ascii("ID3", start);
     if tagged {
         let flags = r.byte(start + 5)?;
-        let raw = r.bytes(start + 6, 4).filter(|b| b.iter().all(|x| *x < 0x80))?;
+        let raw = r
+            .bytes(start + 6, 4)
+            .filter(|b| b.iter().all(|x| *x < 0x80))?;
         let tag = raw.iter().fold(0u64, |v, b| v << 7 | u64::from(*b));
         position = start + 10 + tag + if flags & 0x10 != 0 { 10 } else { 0 };
         // Some encoders pad the tag with zeros.
@@ -423,7 +509,9 @@ pub fn mp3(r: &mut Reader, start: u64) -> Option<Carved> {
     let limit = r.size().min(start + AUDIO_LIMIT);
     let (mut frames, mut samples, mut rate) = (0u32, 0u64, 0u32);
     while position + 4 <= limit {
-        let Some(frame) = r.u32be(position).and_then(MpegFrame::parse) else { break };
+        let Some(frame) = r.u32be(position).and_then(MpegFrame::parse) else {
+            break;
+        };
         if frames > 0 && frame.sample_rate != rate {
             break;
         }

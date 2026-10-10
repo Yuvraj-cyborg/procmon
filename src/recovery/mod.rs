@@ -15,12 +15,12 @@ mod reader;
 mod scanner;
 
 pub use access::{AccessError, is_elevated, open, relaunch_elevated};
-pub use carver::{Progress, Stage};
+pub use carver::Stage;
 pub use disks::{Disk, DiskKind, holding, list};
-pub use export::{ExportProgress, ExportReport, export};
-pub use found::{Condition, FoundFile, Kind, Origin, media_length};
-pub use preview::{Preview, has_preview, thumbnail};
-pub use reader::{ByteSource, RawDevice, ReadError};
+pub use export::{ExportProgress, export};
+pub use found::{Condition, FoundFile, Kind, Origin, Timestamp};
+pub use preview::{has_preview, thumbnail};
+pub use reader::{ByteSource, RawDevice};
 pub use scanner::RecoveryScan;
 
 #[cfg(test)]

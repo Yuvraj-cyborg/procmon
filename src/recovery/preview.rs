@@ -39,7 +39,10 @@ pub fn thumbnail(file: &FoundFile, source: &dyn ByteSource, side: u32) -> Option
     // A JPEG's EXIF block usually carries a small copy of the photo, which
     // spares decoding every megapixel.
     let head = read(file, source, 0, 128 * 1024)?;
-    let exif = (format == ImageFormat::Jpeg).then(|| exif(&head)).flatten().unwrap_or_default();
+    let exif = (format == ImageFormat::Jpeg)
+        .then(|| exif(&head))
+        .flatten()
+        .unwrap_or_default();
     if side <= 320
         && let Some(small) = &exif.thumbnail
         && let Ok(decoded) = image::load_from_memory_with_format(small, ImageFormat::Jpeg)
@@ -64,7 +67,12 @@ pub fn thumbnail(file: &FoundFile, source: &dyn ByteSource, side: u32) -> Option
 
 /// `count` bytes from `position` within the file, across its extents.
 /// Unreadable stretches read as zeros: a partly damaged photo still shows.
-pub fn read(file: &FoundFile, source: &dyn ByteSource, position: u64, count: usize) -> Option<Vec<u8>> {
+pub fn read(
+    file: &FoundFile,
+    source: &dyn ByteSource,
+    position: u64,
+    count: usize,
+) -> Option<Vec<u8>> {
     let total = file.size().0;
     if position >= total {
         return None;
@@ -82,7 +90,9 @@ pub fn read(file: &FoundFile, source: &dyn ByteSource, position: u64, count: usi
             let within = wanted - logical;
             let take = (count - done).min((extent.length - within) as usize);
             let slice = &mut bytes[done..done + take];
-            let got = source.read_at(slice, extent.offset + within).unwrap_or(take);
+            let got = source
+                .read_at(slice, extent.offset + within)
+                .unwrap_or(take);
             done += got;
             if got < take {
                 break;
@@ -134,18 +144,30 @@ fn parse_exif(tiff: &[u8]) -> Option<Exif> {
     };
     let u16_at = |offset: usize| -> Option<usize> {
         let bytes = [*tiff.get(offset)?, *tiff.get(offset + 1)?];
-        Some(usize::from(if little { u16::from_le_bytes(bytes) } else { u16::from_be_bytes(bytes) }))
+        Some(usize::from(if little {
+            u16::from_le_bytes(bytes)
+        } else {
+            u16::from_be_bytes(bytes)
+        }))
     };
     let u32_at = |offset: usize| -> Option<usize> {
         let bytes: [u8; 4] = tiff.get(offset..offset + 4)?.try_into().ok()?;
-        Some((if little { u32::from_le_bytes(bytes) } else { u32::from_be_bytes(bytes) }) as usize)
+        Some(
+            (if little {
+                u32::from_le_bytes(bytes)
+            } else {
+                u32::from_be_bytes(bytes)
+            }) as usize,
+        )
     };
     // Tag value (offset field) for `tag` in the directory at `directory`.
     let find = |directory: usize, tag: usize| -> Option<(usize, usize)> {
         let count = u16_at(directory)?;
         (0..count.min(512)).find_map(|index| {
             let entry = directory + 2 + index * 12;
-            (u16_at(entry)? == tag).then(|| Some((u32_at(entry + 4)?, u32_at(entry + 8)?))).flatten()
+            (u16_at(entry)? == tag)
+                .then(|| Some((u32_at(entry + 4)?, u32_at(entry + 8)?)))
+                .flatten()
         })
     };
     let first = u32_at(4)?;
@@ -172,8 +194,17 @@ fn exif_date(text: &str) -> Option<Timestamp> {
         .split([':', ' '])
         .filter_map(|part| part.trim_matches('\0').parse().ok())
         .collect();
-    let [year, month, day, hour, minute, second] = numbers[..] else { return None };
-    Timestamp::new(year, month as u8, day as u8, hour as u8, minute as u8, second as u8)
+    let [year, month, day, hour, minute, second] = numbers[..] else {
+        return None;
+    };
+    Timestamp::new(
+        year,
+        month as u8,
+        day as u8,
+        hour as u8,
+        minute as u8,
+        second as u8,
+    )
 }
 
 #[cfg(test)]
@@ -182,7 +213,10 @@ mod tests {
 
     #[test]
     fn reads_exif_dates() {
-        assert_eq!(exif_date("2024:07:14 18:22:31"), Timestamp::new(2024, 7, 14, 18, 22, 31));
+        assert_eq!(
+            exif_date("2024:07:14 18:22:31"),
+            Timestamp::new(2024, 7, 14, 18, 22, 31)
+        );
         assert_eq!(exif_date("    :  :     :  :  "), None);
     }
 }

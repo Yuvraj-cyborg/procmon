@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadError {
@@ -64,7 +64,6 @@ pub trait ByteSource: Send + Sync {
 /// reads, which are safe from several threads at once.
 pub struct RawDevice {
     file: File,
-    path: PathBuf,
     size: u64,
     block_size: usize,
 }
@@ -79,14 +78,9 @@ impl RawDevice {
         let (size, block_size) = geometry(&file, path)?;
         Ok(Self {
             file,
-            path: path.to_path_buf(),
             size,
             block_size: block_size.max(512),
         })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     fn read_aligned(&self, buffer: &mut [u8], offset: u64) -> Result<usize, ReadError> {
@@ -123,7 +117,9 @@ impl ByteSource for RawDevice {
         }
         // Read the whole blocks around the request, then copy out the middle.
         let start = offset / block * block;
-        let end = self.size.min((offset + wanted as u64).div_ceil(block) * block);
+        let end = self
+            .size
+            .min((offset + wanted as u64).div_ceil(block) * block);
         let mut scratch = vec![0; (end - start) as usize];
         let got = self.read_aligned(&mut scratch, start)?;
         let skip = (offset - start) as usize;
@@ -201,8 +197,10 @@ fn geometry(file: &File, path: &Path) -> io::Result<(u64, usize)> {
 }
 
 /// Bytes in memory, for tests.
+#[cfg(test)]
 pub struct MemorySource(pub Vec<u8>);
 
+#[cfg(test)]
 impl ByteSource for MemorySource {
     fn size(&self) -> u64 {
         self.0.len() as u64
@@ -249,17 +247,16 @@ impl<'a> Reader<'a> {
         self.source.size()
     }
 
-    pub fn source(&self) -> &'a dyn ByteSource {
-        self.source
-    }
-
     /// The cached page with this index, or `None` past the end or when unreadable.
     fn page(&mut self, index: u64) -> Option<&[u8]> {
         if !self.pages.contains_key(&index) {
             if self.bad.contains(&index) || index * Self::PAGE >= self.size() {
                 return None;
             }
-            let Some(page) = self.source.bytes_at(index * Self::PAGE, Self::PAGE as usize) else {
+            let Some(page) = self
+                .source
+                .bytes_at(index * Self::PAGE, Self::PAGE as usize)
+            else {
                 self.bad.insert(index);
                 return None;
             };

@@ -34,13 +34,19 @@ pub struct GpuProbe {
 
 impl GpuProbe {
     pub fn new() -> Self {
-        Self { platform: platform::Probe::new() }
+        Self {
+            platform: platform::Probe::new(),
+        }
     }
 
     /// Readings for the busiest GPU, and each process's share when
     /// `per_process` is set (on Linux that walks every open file, so it is
     /// asked for only while someone looks).
-    pub fn sample(&mut self, per_process: bool, elapsed: Duration) -> (Option<GpuStats>, HashMap<Pid, GpuUsage>) {
+    pub fn sample(
+        &mut self,
+        per_process: bool,
+        elapsed: Duration,
+    ) -> (Option<GpuStats>, HashMap<Pid, GpuUsage>) {
         self.platform.sample(per_process, elapsed)
     }
 }
@@ -53,7 +59,9 @@ pub fn parse_fdinfo(text: &str) -> Option<(String, HashMap<String, u64>, Option<
     let mut engines = HashMap::new();
     let mut memory: Option<u64> = None;
     for line in text.lines() {
-        let Some((key, value)) = line.split_once(':') else { continue };
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
         let value = value.trim();
         if key == "drm-client-id" {
             client = Some(value.to_string());
@@ -64,7 +72,10 @@ pub fn parse_fdinfo(text: &str) -> Option<(String, HashMap<String, u64>, Option<
         } else if key.starts_with("drm-total-") || key == "drm-memory-vram" {
             // `drm-total-<region>: 1024 KiB` (or MiB), summed over regions.
             let mut parts = value.split_whitespace();
-            if let (Some(number), unit) = (parts.next().and_then(|n| n.parse::<u64>().ok()), parts.next()) {
+            if let (Some(number), unit) = (
+                parts.next().and_then(|n| n.parse::<u64>().ok()),
+                parts.next(),
+            ) {
                 let scale = match unit {
                     Some("KiB") => 1 << 10,
                     Some("MiB") => 1 << 20,
@@ -92,14 +103,20 @@ pub fn pci_name(ids: &str, vendor: &str, device: &str) -> Option<String> {
             if in_vendor {
                 break;
             }
-            if let Some(name) = line.strip_prefix(vendor).and_then(|rest| rest.strip_prefix("  ")) {
+            if let Some(name) = line
+                .strip_prefix(vendor)
+                .and_then(|rest| rest.strip_prefix("  "))
+            {
                 in_vendor = true;
                 vendor_name = name.to_string();
             }
             continue;
         }
         if in_vendor
-            && let Some(name) = line.strip_prefix('\t').and_then(|l| l.strip_prefix(device)).and_then(|l| l.strip_prefix("  "))
+            && let Some(name) = line
+                .strip_prefix('\t')
+                .and_then(|l| l.strip_prefix(device))
+                .and_then(|l| l.strip_prefix("  "))
         {
             let model = match (name.find('['), name.rfind(']')) {
                 (Some(open), Some(close)) if close > open => &name[open + 1..close],
@@ -160,7 +177,11 @@ mod platform {
             }
         }
 
-        pub fn sample(&mut self, per_process: bool, elapsed: Duration) -> (Option<GpuStats>, HashMap<Pid, GpuUsage>) {
+        pub fn sample(
+            &mut self,
+            per_process: bool,
+            elapsed: Duration,
+        ) -> (Option<GpuStats>, HashMap<Pid, GpuUsage>) {
             let mut usage = HashMap::new();
             let mut busiest_engine = None;
             if per_process {
@@ -174,17 +195,29 @@ mod platform {
                 let stats = nvml.stats();
                 if per_process {
                     for (pid, share) in nvml.processes() {
-                        usage.entry(pid).or_insert(GpuUsage { share, memory: None }).share = share;
+                        usage
+                            .entry(pid)
+                            .or_insert(GpuUsage {
+                                share,
+                                memory: None,
+                            })
+                            .share = share;
                     }
                 }
                 return (Some(stats), usage);
             }
             let mut best: Option<GpuStats> = None;
             for card in &self.cards {
-                let read = |file: &str| fs::read_to_string(card.device.join(file)).ok().and_then(|t| t.trim().parse::<u64>().ok());
+                let read = |file: &str| {
+                    fs::read_to_string(card.device.join(file))
+                        .ok()
+                        .and_then(|t| t.trim().parse::<u64>().ok())
+                };
                 let stats = GpuStats {
                     name: card.name.clone(),
-                    utilization: read("gpu_busy_percent").map(|p| Ratio::new(p as f64 / 100.0)).or(busiest_engine),
+                    utilization: read("gpu_busy_percent")
+                        .map(|p| Ratio::new(p as f64 / 100.0))
+                        .or(busiest_engine),
                     memory_used: read("mem_info_vram_used").map(Bytes),
                     memory_total: read("mem_info_vram_total").map(Bytes),
                 };
@@ -201,17 +234,28 @@ mod platform {
         fn walk_clients(&mut self, elapsed: Duration) -> (HashMap<Pid, GpuUsage>, Option<Ratio>) {
             let mut current: HashMap<(u32, String), HashMap<String, u64>> = HashMap::new();
             let mut memory: HashMap<u32, u64> = HashMap::new();
-            let Ok(processes) = fs::read_dir("/proc") else { return (HashMap::new(), None) };
+            let Ok(processes) = fs::read_dir("/proc") else {
+                return (HashMap::new(), None);
+            };
             for process in processes.flatten() {
-                let Ok(pid) = process.file_name().to_string_lossy().parse::<u32>() else { continue };
-                let Ok(fds) = fs::read_dir(process.path().join("fd")) else { continue };
+                let Ok(pid) = process.file_name().to_string_lossy().parse::<u32>() else {
+                    continue;
+                };
+                let Ok(fds) = fs::read_dir(process.path().join("fd")) else {
+                    continue;
+                };
                 for fd in fds.flatten() {
-                    let is_gpu = fs::read_link(fd.path()).is_ok_and(|target| target.starts_with("/dev/dri/"));
+                    let is_gpu = fs::read_link(fd.path())
+                        .is_ok_and(|target| target.starts_with("/dev/dri/"));
                     if !is_gpu {
                         continue;
                     }
                     let info = process.path().join("fdinfo").join(fd.file_name());
-                    let Some((client, engines, held)) = fs::read_to_string(info).ok().as_deref().and_then(parse_fdinfo) else {
+                    let Some((client, engines, held)) = fs::read_to_string(info)
+                        .ok()
+                        .as_deref()
+                        .and_then(parse_fdinfo)
+                    else {
                         continue;
                     };
                     // Several descriptors can share one client; count it once.
@@ -231,7 +275,9 @@ mod platform {
                 let before = self.clients.get(key);
                 let mut busiest = 0.0f64;
                 for (engine, now) in engines {
-                    let delta = before.and_then(|b| b.get(engine)).map_or(0, |was| now.saturating_sub(*was));
+                    let delta = before
+                        .and_then(|b| b.get(engine))
+                        .map_or(0, |was| now.saturating_sub(*was));
                     *per_engine.entry(engine.clone()).or_default() += delta;
                     busiest = busiest.max(delta as f64 / nanos);
                 }
@@ -241,9 +287,12 @@ mod platform {
                 });
                 entry.share = Percent::new(entry.share.get() + busiest * 100.0);
             }
-            let engine_load = per_engine.values().map(|ns| *ns as f64 / nanos).fold(None, |best: Option<f64>, load| {
-                Some(best.map_or(load, |b| b.max(load)))
-            });
+            let engine_load = per_engine
+                .values()
+                .map(|ns| *ns as f64 / nanos)
+                .fold(None, |best: Option<f64>, load| {
+                    Some(best.map_or(load, |b| b.max(load)))
+                });
             let had_baseline = !self.clients.is_empty();
             self.clients = current;
             (usage, engine_load.filter(|_| had_baseline).map(Ratio::new))
@@ -251,16 +300,23 @@ mod platform {
     }
 
     fn cards() -> Vec<Card> {
-        let ids = ["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids"]
-            .iter()
-            .find_map(|path| fs::read_to_string(path).ok())
-            .unwrap_or_default();
-        let Ok(entries) = fs::read_dir("/sys/class/drm") else { return Vec::new() };
+        let ids = [
+            "/usr/share/hwdata/pci.ids",
+            "/usr/share/misc/pci.ids",
+            "/usr/share/pci.ids",
+        ]
+        .iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+        .unwrap_or_default();
+        let Ok(entries) = fs::read_dir("/sys/class/drm") else {
+            return Vec::new();
+        };
         entries
             .flatten()
             .filter(|e| {
                 let name = e.file_name().to_string_lossy().into_owned();
-                name.strip_prefix("card").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+                name.strip_prefix("card")
+                    .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
             })
             .map(|entry| {
                 let device = entry.path().join("device");
@@ -269,19 +325,29 @@ mod platform {
                     .lines()
                     .find_map(|l| l.strip_prefix("PCI_ID="))
                     .and_then(|id| id.split_once(':'))
-                    .and_then(|(vendor, device)| pci_name(&ids, &vendor.to_lowercase(), &device.to_lowercase()));
+                    .and_then(|(vendor, device)| {
+                        pci_name(&ids, &vendor.to_lowercase(), &device.to_lowercase())
+                    });
                 Card { device, name }
             })
             .collect()
     }
 
+    type InitFn = unsafe extern "C" fn() -> i32;
+    type HandleFn = unsafe extern "C" fn(c_uint, *mut *mut c_void) -> i32;
+    type NameFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_uint) -> i32;
+    type UtilizationFn = unsafe extern "C" fn(*mut c_void, *mut [c_uint; 2]) -> i32;
+    type MemoryFn = unsafe extern "C" fn(*mut c_void, *mut [u64; 3]) -> i32;
+    type ProcessesFn =
+        unsafe extern "C" fn(*mut c_void, *mut ProcessSample, *mut c_uint, u64) -> i32;
+
     /// NVIDIA's management library, loaded only if the driver installed it.
     struct Nvml {
         device: *mut c_void,
         name: Option<String>,
-        utilization: unsafe extern "C" fn(*mut c_void, *mut [c_uint; 2]) -> i32,
-        memory: unsafe extern "C" fn(*mut c_void, *mut [u64; 3]) -> i32,
-        processes: unsafe extern "C" fn(*mut c_void, *mut ProcessSample, *mut c_uint, u64) -> i32,
+        utilization: UtilizationFn,
+        memory: MemoryFn,
+        processes: ProcessesFn,
         last_seen: u64,
     }
 
@@ -312,11 +378,11 @@ mod platform {
                     let pointer = libc::dlsym(library, name.as_ptr());
                     (!pointer.is_null()).then_some(pointer)
                 };
-                let init: unsafe extern "C" fn() -> i32 = std::mem::transmute(symbol(c"nvmlInit_v2")?);
-                let handle: unsafe extern "C" fn(c_uint, *mut *mut c_void) -> i32 =
-                    std::mem::transmute(symbol(c"nvmlDeviceGetHandleByIndex_v2")?);
-                let name: unsafe extern "C" fn(*mut c_void, *mut c_char, c_uint) -> i32 =
-                    std::mem::transmute(symbol(c"nvmlDeviceGetName")?);
+                use std::mem::transmute;
+                let init = transmute::<*mut c_void, InitFn>(symbol(c"nvmlInit_v2")?);
+                let handle =
+                    transmute::<*mut c_void, HandleFn>(symbol(c"nvmlDeviceGetHandleByIndex_v2")?);
+                let name = transmute::<*mut c_void, NameFn>(symbol(c"nvmlDeviceGetName")?);
                 if init() != 0 {
                     return None;
                 }
@@ -325,14 +391,22 @@ mod platform {
                     return None;
                 }
                 let mut buffer = [0 as c_char; 96];
-                let label = (name(device, buffer.as_mut_ptr(), buffer.len() as c_uint) == 0)
-                    .then(|| CStr::from_ptr(buffer.as_ptr()).to_string_lossy().into_owned());
+                let label =
+                    (name(device, buffer.as_mut_ptr(), buffer.len() as c_uint) == 0).then(|| {
+                        CStr::from_ptr(buffer.as_ptr())
+                            .to_string_lossy()
+                            .into_owned()
+                    });
                 Some(Self {
                     device,
                     name: label,
-                    utilization: std::mem::transmute(symbol(c"nvmlDeviceGetUtilizationRates")?),
-                    memory: std::mem::transmute(symbol(c"nvmlDeviceGetMemoryInfo")?),
-                    processes: std::mem::transmute(symbol(c"nvmlDeviceGetProcessUtilization")?),
+                    utilization: transmute::<*mut c_void, UtilizationFn>(symbol(
+                        c"nvmlDeviceGetUtilizationRates",
+                    )?),
+                    memory: transmute::<*mut c_void, MemoryFn>(symbol(c"nvmlDeviceGetMemoryInfo")?),
+                    processes: transmute::<*mut c_void, ProcessesFn>(symbol(
+                        c"nvmlDeviceGetProcessUtilization",
+                    )?),
                     last_seen: 0,
                 })
             }
@@ -342,7 +416,12 @@ mod platform {
             let mut rates = [0 as c_uint; 2];
             let mut memory = [0u64; 3];
             // SAFETY: NVML fills the structs it is given.
-            let (rated, measured) = unsafe { ((self.utilization)(self.device, &mut rates) == 0, (self.memory)(self.device, &mut memory) == 0) };
+            let (rated, measured) = unsafe {
+                (
+                    (self.utilization)(self.device, &mut rates) == 0,
+                    (self.memory)(self.device, &mut memory) == 0,
+                )
+            };
             GpuStats {
                 name: self.name.clone(),
                 utilization: rated.then(|| Ratio::new(f64::from(rates[0]) / 100.0)),
@@ -354,18 +433,40 @@ mod platform {
         fn processes(&mut self) -> Vec<(Pid, Percent)> {
             let mut count: c_uint = 0;
             // SAFETY: the first call only reports how many samples there are.
-            unsafe { (self.processes)(self.device, std::ptr::null_mut(), &mut count, self.last_seen) };
+            unsafe {
+                (self.processes)(
+                    self.device,
+                    std::ptr::null_mut(),
+                    &mut count,
+                    self.last_seen,
+                )
+            };
             if count == 0 {
                 return Vec::new();
             }
             let mut samples = vec![ProcessSample::default(); count as usize];
             // SAFETY: the buffer holds `count` samples.
-            if unsafe { (self.processes)(self.device, samples.as_mut_ptr(), &mut count, self.last_seen) } != 0 {
+            if unsafe {
+                (self.processes)(
+                    self.device,
+                    samples.as_mut_ptr(),
+                    &mut count,
+                    self.last_seen,
+                )
+            } != 0
+            {
                 return Vec::new();
             }
             samples.truncate(count as usize);
-            self.last_seen = samples.iter().map(|s| s.timestamp).max().unwrap_or(self.last_seen);
-            samples.into_iter().map(|s| (Pid(s.pid), Percent::new(f64::from(s.sm)))).collect()
+            self.last_seen = samples
+                .iter()
+                .map(|s| s.timestamp)
+                .max()
+                .unwrap_or(self.last_seen);
+            samples
+                .into_iter()
+                .map(|s| (Pid(s.pid), Percent::new(f64::from(s.sm))))
+                .collect()
         }
     }
 }
@@ -376,8 +477,9 @@ mod platform {
     use std::time::Duration;
 
     use windows_sys::Win32::System::Performance::{
-        PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_FMT_LARGE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA,
-        PdhAddEnglishCounterW, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
+        PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_FMT_LARGE, PDH_HCOUNTER, PDH_HQUERY,
+        PDH_MORE_DATA, PdhAddEnglishCounterW, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
+        PdhOpenQueryW,
     };
 
     use super::{GpuStats, GpuUsage, parse_engine_instance};
@@ -413,26 +515,57 @@ mod platform {
             // SAFETY: PDH writes the handles it is given; paths are NUL-terminated.
             unsafe {
                 if PdhOpenQueryW(std::ptr::null(), 0, &mut probe.query) == 0 {
-                    PdhAddEnglishCounterW(probe.query, wide(r"\GPU Engine(*)\Utilization Percentage").as_ptr(), 0, &mut probe.engines);
-                    PdhAddEnglishCounterW(probe.query, wide(r"\GPU Adapter Memory(*)\Dedicated Usage").as_ptr(), 0, &mut probe.adapter_memory);
-                    PdhAddEnglishCounterW(probe.query, wide(r"\GPU Process Memory(*)\Dedicated Usage").as_ptr(), 0, &mut probe.process_memory);
+                    PdhAddEnglishCounterW(
+                        probe.query,
+                        wide(r"\GPU Engine(*)\Utilization Percentage").as_ptr(),
+                        0,
+                        &mut probe.engines,
+                    );
+                    PdhAddEnglishCounterW(
+                        probe.query,
+                        wide(r"\GPU Adapter Memory(*)\Dedicated Usage").as_ptr(),
+                        0,
+                        &mut probe.adapter_memory,
+                    );
+                    PdhAddEnglishCounterW(
+                        probe.query,
+                        wide(r"\GPU Process Memory(*)\Dedicated Usage").as_ptr(),
+                        0,
+                        &mut probe.process_memory,
+                    );
                 }
             }
             probe
         }
 
-        pub fn sample(&mut self, _per_process: bool, _elapsed: Duration) -> (Option<GpuStats>, HashMap<Pid, GpuUsage>) {
+        pub fn sample(
+            &mut self,
+            _per_process: bool,
+            _elapsed: Duration,
+        ) -> (Option<GpuStats>, HashMap<Pid, GpuUsage>) {
             if self.query.is_null() {
                 return (None, HashMap::new());
             }
             // SAFETY: the query handle came from PdhOpenQueryW.
             unsafe { PdhCollectQueryData(self.query) };
             let name = self.adapter.as_ref().map(|(name, _)| name.clone());
-            let total = self.adapter.as_ref().map(|(_, memory)| Bytes(*memory)).filter(|b| b.0 > 0);
+            let total = self
+                .adapter
+                .as_ref()
+                .map(|(_, memory)| Bytes(*memory))
+                .filter(|b| b.0 > 0);
             if !self.primed {
                 // Utilization is a rate: it needs a second collection.
                 self.primed = true;
-                return (Some(GpuStats { name, utilization: None, memory_used: None, memory_total: total }), HashMap::new());
+                return (
+                    Some(GpuStats {
+                        name,
+                        utilization: None,
+                        memory_used: None,
+                        memory_total: total,
+                    }),
+                    HashMap::new(),
+                );
             }
             // Task Manager's arithmetic: an engine's load is the sum over the
             // processes using it; the GPU's is its busiest engine; a process's
@@ -440,13 +573,19 @@ mod platform {
             let mut engines: HashMap<String, f64> = HashMap::new();
             let mut by_kind: HashMap<(u32, String), f64> = HashMap::new();
             for (instance, value) in values(self.engines, PDH_FMT_DOUBLE) {
-                let Some((pid, engine, kind)) = parse_engine_instance(&instance) else { continue };
+                let Some((pid, engine, kind)) = parse_engine_instance(&instance) else {
+                    continue;
+                };
                 *engines.entry(engine).or_default() += value;
                 *by_kind.entry((pid, kind)).or_default() += value;
             }
             let mut memory: HashMap<u32, u64> = HashMap::new();
             for (instance, value) in values(self.process_memory, PDH_FMT_LARGE) {
-                if let Some(pid) = instance.strip_prefix("pid_").and_then(|r| r.split('_').next()).and_then(|p| p.parse().ok()) {
+                if let Some(pid) = instance
+                    .strip_prefix("pid_")
+                    .and_then(|r| r.split('_').next())
+                    .and_then(|p| p.parse().ok())
+                {
                     *memory.entry(pid).or_default() += value as u64;
                 }
             }
@@ -458,7 +597,10 @@ mod platform {
                 });
                 entry.share = Percent::new(entry.share.get().max(share));
             }
-            let used = values(self.adapter_memory, PDH_FMT_LARGE).into_iter().map(|(_, v)| v as u64).max();
+            let used = values(self.adapter_memory, PDH_FMT_LARGE)
+                .into_iter()
+                .map(|(_, v)| v as u64)
+                .max();
             let busiest = engines.values().copied().fold(0.0f64, f64::max);
             let stats = GpuStats {
                 name,
@@ -475,7 +617,14 @@ mod platform {
         let (mut size, mut count) = (0u32, 0u32);
         // SAFETY: the first call reports the buffer size; the second fills it.
         unsafe {
-            if PdhGetFormattedCounterArrayW(counter, format, &mut size, &mut count, std::ptr::null_mut()) != PDH_MORE_DATA as u32 {
+            if PdhGetFormattedCounterArrayW(
+                counter,
+                format,
+                &mut size,
+                &mut count,
+                std::ptr::null_mut(),
+            ) != PDH_MORE_DATA
+            {
                 return Vec::new();
             }
             let mut buffer = vec![0u64; (size as usize).div_ceil(8)];
@@ -491,7 +640,8 @@ mod platform {
                     while *item.szName.add(length) != 0 {
                         length += 1;
                     }
-                    let name = String::from_utf16_lossy(std::slice::from_raw_parts(item.szName, length));
+                    let name =
+                        String::from_utf16_lossy(std::slice::from_raw_parts(item.szName, length));
                     let value = if format == PDH_FMT_LARGE {
                         item.FmtValue.Anonymous.largeValue as f64
                     } else {
@@ -505,18 +655,28 @@ mod platform {
 
     /// The hardware adapter with the most dedicated memory: its name and memory.
     fn adapter() -> Option<(String, u64)> {
-        use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1};
+        use windows::Win32::Graphics::Dxgi::{
+            CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1,
+        };
         // SAFETY: COM calls on interfaces windows-rs keeps alive.
         unsafe {
             let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
             let mut best: Option<(String, u64)> = None;
             for index in 0.. {
-                let Ok(adapter) = factory.EnumAdapters1(index) else { break };
-                let Ok(description) = adapter.GetDesc1() else { continue };
+                let Ok(adapter) = factory.EnumAdapters1(index) else {
+                    break;
+                };
+                let Ok(description) = adapter.GetDesc1() else {
+                    continue;
+                };
                 if description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
                     continue;
                 }
-                let end = description.Description.iter().position(|c| *c == 0).unwrap_or(description.Description.len());
+                let end = description
+                    .Description
+                    .iter()
+                    .position(|c| *c == 0)
+                    .unwrap_or(description.Description.len());
                 let name = String::from_utf16_lossy(&description.Description[..end]);
                 let memory = description.DedicatedVideoMemory as u64;
                 if best.as_ref().is_none_or(|(_, m)| memory > *m) {
@@ -544,7 +704,11 @@ mod platform {
             Self
         }
 
-        pub fn sample(&mut self, _per_process: bool, _elapsed: Duration) -> (Option<GpuStats>, HashMap<Pid, GpuUsage>) {
+        pub fn sample(
+            &mut self,
+            _per_process: bool,
+            _elapsed: Duration,
+        ) -> (Option<GpuStats>, HashMap<Pid, GpuUsage>) {
             (None, HashMap::new())
         }
     }
@@ -568,16 +732,34 @@ mod tests {
     #[test]
     fn names_cards_from_pci_ids() {
         let ids = "# comment\n1002  Advanced Micro Devices, Inc. [AMD/ATI]\n\t73ff  Navi 23 [Radeon RX 6600/6600 XT/6600M]\n\t1638  Cezanne\n8086  Intel Corporation\n\t46a6  Alder Lake-P GT2 [Iris Xe Graphics]\n";
-        assert_eq!(pci_name(ids, "1002", "73ff").as_deref(), Some("AMD Radeon RX 6600/6600 XT/6600M"));
-        assert_eq!(pci_name(ids, "1002", "1638").as_deref(), Some("AMD Cezanne"));
-        assert_eq!(pci_name(ids, "8086", "46a6").as_deref(), Some("Intel Iris Xe Graphics"));
+        assert_eq!(
+            pci_name(ids, "1002", "73ff").as_deref(),
+            Some("AMD Radeon RX 6600/6600 XT/6600M")
+        );
+        assert_eq!(
+            pci_name(ids, "1002", "1638").as_deref(),
+            Some("AMD Cezanne")
+        );
+        assert_eq!(
+            pci_name(ids, "8086", "46a6").as_deref(),
+            Some("Intel Iris Xe Graphics")
+        );
         assert_eq!(pci_name(ids, "10de", "2204"), None);
     }
 
     #[test]
     fn reads_windows_engine_instances() {
-        let parsed = parse_engine_instance("pid_1234_luid_0x00000000_0x0000D1B5_phys_0_eng_3_engtype_3D").unwrap();
-        assert_eq!(parsed, (1234, "luid_0x00000000_0x0000D1B5_phys_0_eng_3".into(), "3D".into()));
+        let parsed =
+            parse_engine_instance("pid_1234_luid_0x00000000_0x0000D1B5_phys_0_eng_3_engtype_3D")
+                .unwrap();
+        assert_eq!(
+            parsed,
+            (
+                1234,
+                "luid_0x00000000_0x0000D1B5_phys_0_eng_3".into(),
+                "3D".into()
+            )
+        );
         assert!(parse_engine_instance("luid_0x0_phys_0").is_none());
     }
 }

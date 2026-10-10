@@ -40,12 +40,18 @@ impl RecoveryScan {
 
     /// File systems the directory pass read, e.g. `["FAT32"]`.
     pub fn file_systems(&self) -> Vec<&'static str> {
-        self.file_systems.lock().map(|f| f.clone()).unwrap_or_default()
+        self.file_systems
+            .lock()
+            .map(|f| f.clone())
+            .unwrap_or_default()
     }
 
     /// Files found since the last call, for the page to show.
     pub fn collect(&self) -> Vec<FoundFile> {
-        self.pending.lock().map(|mut files| std::mem::take(&mut *files)).unwrap_or_default()
+        self.pending
+            .lock()
+            .map(|mut files| std::mem::take(&mut *files))
+            .unwrap_or_default()
     }
 
     /// Runs the scan on the calling thread. Ends early, without an error,
@@ -61,7 +67,9 @@ impl RecoveryScan {
             if self.progress.is_cancelled() {
                 return Ok(());
             }
-            let Some(scan) = filesystems::scan(source, partition, &cancelled) else { continue };
+            let Some(scan) = filesystems::scan(source, partition, &cancelled) else {
+                continue;
+            };
             if let Ok(mut systems) = self.file_systems.lock() {
                 systems.push(scan.format);
             }
@@ -79,27 +87,33 @@ impl RecoveryScan {
 
         self.progress.begin(Stage::Contents, None);
         allocated.sort_by_key(|range| range.start);
-        carver::scan(source, None, &allocated, &self.progress, |carved, offset| {
-            // Listed already, with its name.
-            if named.contains(&offset) {
-                return;
-            }
-            self.publish(FoundFile {
-                id: self.next_id(),
-                format: Some(carved.format),
-                kind: carved.format.kind(),
-                extents: vec![Extent {
-                    offset,
-                    length: carved.length,
-                }],
-                name: None,
-                folder: None,
-                date: carved.date,
-                condition: carved.condition,
-                details: carved.details,
-                origin: Origin::Contents,
-            });
-        })?;
+        carver::scan(
+            source,
+            None,
+            &allocated,
+            &self.progress,
+            |carved, offset| {
+                // Listed already, with its name.
+                if named.contains(&offset) {
+                    return;
+                }
+                self.publish(FoundFile {
+                    id: self.next_id(),
+                    format: Some(carved.format),
+                    kind: carved.format.kind(),
+                    extents: vec![Extent {
+                        offset,
+                        length: carved.length,
+                    }],
+                    name: None,
+                    folder: None,
+                    date: carved.date,
+                    condition: carved.condition,
+                    details: carved.details,
+                    origin: Origin::Contents,
+                });
+            },
+        )?;
         if !self.progress.is_cancelled() {
             self.progress.begin(Stage::Finished, None);
         }
@@ -120,8 +134,12 @@ impl RecoveryScan {
 /// Checks a directory entry against its contents: the format they hold, what
 /// they say about themselves, and whether they are still there.
 pub fn identify(file: &mut FoundFile, reader: &mut Reader) {
-    let Some(first) = file.extents.first().copied() else { return };
-    let Some(head) = reader.bytes(first.offset, 32) else { return };
+    let Some(first) = file.extents.first().copied() else {
+        return;
+    };
+    let Some(head) = reader.bytes(first.offset, 32) else {
+        return;
+    };
     let expected = Format::for_name(file.name.as_deref().unwrap_or_default());
     let Some(parse) = carver::parser_for(&head) else {
         // Named like a photo or video, but holding something else: its

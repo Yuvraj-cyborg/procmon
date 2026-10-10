@@ -22,10 +22,16 @@ const HEIC: &[u8] = include_bytes!("../../tests/fixtures/recovery/photo.heic");
 
 fn image(format: ImageFormat, width: u32, height: u32) -> Vec<u8> {
     let pixels = RgbImage::from_fn(width, height, |x, y| {
-        image::Rgb([(x * 255 / width) as u8, (y * 255 / height) as u8, ((x * y) % 7 * 36) as u8])
+        image::Rgb([
+            (x * 255 / width) as u8,
+            (y * 255 / height) as u8,
+            ((x * y) % 7 * 36) as u8,
+        ])
     });
     let mut out = Cursor::new(Vec::new());
-    DynamicImage::ImageRgb8(pixels).write_to(&mut out, format).unwrap();
+    DynamicImage::ImageRgb8(pixels)
+        .write_to(&mut out, format)
+        .unwrap();
     out.into_inner()
 }
 
@@ -87,12 +93,25 @@ fn webm(known_size: bool) -> Vec<u8> {
     header.extend(&doc_type);
     let info = [0x15, 0x49, 0xA9, 0x66, 0x85, 0x2A, 0xD7, 0xB1, 0x81, 0x01];
     let blocks = [0xA3, 0x84, 0x81, 0x00, 0x00, 0x80];
-    let mut cluster = vec![0x1F, 0x43, 0xB6, 0x75, 0x80 | (blocks.len() + 3) as u8, 0xE7, 0x81, 0x00];
+    let mut cluster = vec![
+        0x1F,
+        0x43,
+        0xB6,
+        0x75,
+        0x80 | (blocks.len() + 3) as u8,
+        0xE7,
+        0x81,
+        0x00,
+    ];
     cluster.extend(blocks);
     let body = [&info[..], &cluster].concat();
     let mut bytes = header;
     bytes.extend([0x18, 0x53, 0x80, 0x67]);
-    bytes.push(if known_size { 0x80 | body.len() as u8 } else { 0xFF });
+    bytes.push(if known_size {
+        0x80 | body.len() as u8
+    } else {
+        0xFF
+    });
     bytes.extend(body);
     bytes
 }
@@ -171,7 +190,11 @@ fn crc32(bytes: &[u8]) -> u32 {
     for byte in bytes {
         crc ^= u32::from(*byte);
         for _ in 0..8 {
-            crc = if crc & 1 == 1 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
         }
     }
     !crc
@@ -182,7 +205,9 @@ fn noise(count: usize, seed: u64) -> Vec<u8> {
     let mut state = seed;
     (0..count)
         .map(|_| {
-            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             (state >> 33) as u8
         })
         .collect()
@@ -222,9 +247,15 @@ impl DiskLayout {
 
 fn found(bytes: Vec<u8>, skipping: &[std::ops::Range<u64>]) -> HashMap<u64, Carved> {
     let mut files = HashMap::new();
-    carver::scan(&MemorySource(bytes), None, skipping, &Progress::default(), |carved, offset| {
-        files.insert(offset, carved);
-    })
+    carver::scan(
+        &MemorySource(bytes),
+        None,
+        skipping,
+        &Progress::default(),
+        |carved, offset| {
+            files.insert(offset, carved);
+        },
+    )
     .unwrap();
     files
 }
@@ -247,8 +278,17 @@ fn finds_every_format_with_its_exact_length() {
         (Format::Webm, webm(true)),
         (Format::Avi, avi()),
         (Format::Pdf, pdf(false)),
-        (Format::Docx, zip(&[("[Content_Types].xml", "<Types/>"), ("word/document.xml", "<w:document/>")])),
-        (Format::Zip, zip(&[("notes.txt", "hello"), ("more/data.csv", "1,2,3")])),
+        (
+            Format::Docx,
+            zip(&[
+                ("[Content_Types].xml", "<Types/>"),
+                ("word/document.xml", "<w:document/>"),
+            ]),
+        ),
+        (
+            Format::Zip,
+            zip(&[("notes.txt", "hello"), ("more/data.csv", "1,2,3")]),
+        ),
     ];
     let mut disk = DiskLayout::default();
     let mut expected = HashMap::new();
@@ -259,13 +299,21 @@ fn finds_every_format_with_its_exact_length() {
     disk.gap(4096);
     let found = found(disk.bytes, &[]);
     for (offset, (format, length)) in &expected {
-        let carved = found.get(offset).unwrap_or_else(|| panic!("{format:?} at {offset} was not found"));
+        let carved = found
+            .get(offset)
+            .unwrap_or_else(|| panic!("{format:?} at {offset} was not found"));
         assert_eq!(carved.format, *format);
         assert_eq!(carved.length, *length, "{format:?}");
         assert_eq!(carved.condition, Condition::Good, "{format:?}");
     }
-    let invented: Vec<_> = found.keys().filter(|offset| !expected.contains_key(offset)).collect();
-    assert!(invented.is_empty(), "found files in the noise at {invented:?}");
+    let invented: Vec<_> = found
+        .keys()
+        .filter(|offset| !expected.contains_key(offset))
+        .collect();
+    assert!(
+        invented.is_empty(),
+        "found files in the noise at {invented:?}"
+    );
 }
 
 #[test]
@@ -350,7 +398,11 @@ fn live_files_are_skipped() {
     let kept = disk.place(&jpeg(64, 48));
     let live = disk.place(&image(ImageFormat::Png, 64, 48));
     disk.gap(512);
-    let found = found(disk.bytes, &[live..live + 512]);
+    let skipped = std::ops::Range {
+        start: live,
+        end: live + 512,
+    };
+    let found = found(disk.bytes, &[skipped]);
     assert!(found.contains_key(&kept));
     assert!(!found.contains_key(&live));
 }
@@ -372,7 +424,11 @@ impl ByteSource for Flaky {
     fn read_at(&self, buffer: &mut [u8], offset: u64) -> Result<usize, ReadError> {
         let end = offset + buffer.len() as u64;
         if self.bad.start < end && offset < self.bad.end {
-            return Err(if self.gone { ReadError::Disconnected } else { ReadError::Unreadable });
+            return Err(if self.gone {
+                ReadError::Disconnected
+            } else {
+                ReadError::Unreadable
+            });
         }
         self.inner.read_at(buffer, offset)
     }
@@ -391,7 +447,10 @@ fn unreadable_blocks_are_counted_and_passed_over() {
     };
     let progress = Progress::default();
     let mut offsets = Vec::new();
-    carver::scan(&source, None, &[], &progress, |_, offset| offsets.push(offset)).unwrap();
+    carver::scan(&source, None, &[], &progress, |_, offset| {
+        offsets.push(offset)
+    })
+    .unwrap();
     assert_eq!(offsets, vec![after]);
     assert_eq!(progress.unreadable().0, 64 * 1024);
 
@@ -400,21 +459,39 @@ fn unreadable_blocks_are_counted_and_passed_over() {
         bad: 0..1,
         gone: true,
     };
-    assert_eq!(carver::scan(&gone, None, &[], &Progress::default(), |_, _| {}), Err(ReadError::Disconnected));
+    assert_eq!(
+        carver::scan(&gone, None, &[], &Progress::default(), |_, _| {}),
+        Err(ReadError::Disconnected)
+    );
 }
 
 #[test]
 fn classifies_iso_media_brands() {
     let brands = |list: &[&[u8; 4]]| list.iter().map(|b| b.to_vec()).collect::<Vec<_>>();
-    assert_eq!(super::media::classify(&brands(&[b"heic", b"mif1"])), Format::Heic);
-    assert_eq!(super::media::classify(&brands(&[b"mif1", b"avif"])), Format::Avif);
+    assert_eq!(
+        super::media::classify(&brands(&[b"heic", b"mif1"])),
+        Format::Heic
+    );
+    assert_eq!(
+        super::media::classify(&brands(&[b"mif1", b"avif"])),
+        Format::Avif
+    );
     assert_eq!(super::media::classify(&brands(&[b"qt  "])), Format::Mov);
     assert_eq!(super::media::classify(&brands(&[b"crx "])), Format::Cr3);
-    assert_eq!(super::media::classify(&brands(&[b"M4A ", b"isom"])), Format::M4a);
+    assert_eq!(
+        super::media::classify(&brands(&[b"M4A ", b"isom"])),
+        Format::M4a
+    );
     assert_eq!(super::media::classify(&brands(&[b"3gp4"])), Format::ThreeGp);
-    assert_eq!(super::media::classify(&brands(&[b"isom", b"avc1"])), Format::Mp4);
+    assert_eq!(
+        super::media::classify(&brands(&[b"isom", b"avc1"])),
+        Format::Mp4
+    );
     assert_eq!(super::media::quicktime_date(0), None);
-    assert_eq!(super::media::quicktime_date(3_803_976_000).map(|d| d.year), Some(2024));
+    assert_eq!(
+        super::media::quicktime_date(3_803_976_000).map(|d| d.year),
+        Some(2024)
+    );
 }
 
 // MARK: FAT32 and exFAT, built in memory
@@ -469,15 +546,30 @@ impl Fat32 {
         if live {
             let count = content.len().div_ceil(512);
             for index in 0..count {
-                let next = if index == count - 1 { 0x0FFF_FFFF } else { (cluster + index + 1) as u32 };
+                let next = if index == count - 1 {
+                    0x0FFF_FFFF
+                } else {
+                    (cluster + index + 1) as u32
+                };
                 self.set_fat(cluster + index, next);
             }
         }
     }
 
     /// A 32-byte short entry; `deleted` replaces the first letter with 0xE5.
-    fn short_entry(name: &str, cluster: usize, size: usize, folder: bool, deleted: bool, lowercase: bool) -> Vec<u8> {
-        let (base, ext) = if name == "." { (".", "") } else { name.split_once('.').unwrap_or((name, "")) };
+    fn short_entry(
+        name: &str,
+        cluster: usize,
+        size: usize,
+        folder: bool,
+        deleted: bool,
+        lowercase: bool,
+    ) -> Vec<u8> {
+        let (base, ext) = if name == "." {
+            (".", "")
+        } else {
+            name.split_once('.').unwrap_or((name, ""))
+        };
         let mut entry = format!("{base:<8}{ext:<3}").into_bytes();
         if deleted {
             entry[0] = 0xE5;
@@ -497,7 +589,9 @@ impl Fat32 {
     /// Long name entries for `name`, last part first, as stored on disk.
     fn long_entries(name: &str, short: &str, deleted: bool) -> Vec<u8> {
         let raw = &Self::short_entry(short, 0, 0, false, false, false)[..11];
-        let checksum = raw.iter().fold(0u8, |sum, byte| ((sum & 1) << 7 | sum >> 1).wrapping_add(*byte));
+        let checksum = raw.iter().fold(0u8, |sum, byte| {
+            ((sum & 1) << 7 | sum >> 1).wrapping_add(*byte)
+        });
         let mut units: Vec<u16> = name.encode_utf16().chain([0]).collect();
         while !units.len().is_multiple_of(13) {
             units.push(0xFFFF);
@@ -506,7 +600,11 @@ impl Fat32 {
         let mut entries = Vec::new();
         for part in (0..parts).rev() {
             let mut entry = vec![0u8; 32];
-            entry[0] = if deleted { 0xE5 } else { (part + 1) as u8 | if part == parts - 1 { 0x40 } else { 0 } };
+            entry[0] = if deleted {
+                0xE5
+            } else {
+                (part + 1) as u8 | if part == parts - 1 { 0x40 } else { 0 }
+            };
             entry[11] = 0x0F;
             entry[13] = checksum;
             for (index, unit) in units[part * 13..part * 13 + 13].iter().enumerate() {
@@ -536,38 +634,112 @@ fn deleted_fat_files_come_back_with_their_names() {
     image.store(&photo, 500, false);
 
     let mut root = Fat32::short_entry("LIVE.JPG", 10, photo.len(), false, false, false);
-    root.extend(Fat32::short_entry("IMG_0002.JPG", 100, photo.len(), false, true, false));
-    root.extend(Fat32::long_entries("Holiday photo.jpg", "HOLIDA~1.JPG", true));
-    root.extend(Fat32::short_entry("HOLIDA~1.JPG", 200, photo.len(), false, true, false));
-    root.extend(Fat32::short_entry("SONG.MP3", 300, song.len(), false, true, true));
+    root.extend(Fat32::short_entry(
+        "IMG_0002.JPG",
+        100,
+        photo.len(),
+        false,
+        true,
+        false,
+    ));
+    root.extend(Fat32::long_entries(
+        "Holiday photo.jpg",
+        "HOLIDA~1.JPG",
+        true,
+    ));
+    root.extend(Fat32::short_entry(
+        "HOLIDA~1.JPG",
+        200,
+        photo.len(),
+        false,
+        true,
+        false,
+    ));
+    root.extend(Fat32::short_entry(
+        "SONG.MP3",
+        300,
+        song.len(),
+        false,
+        true,
+        true,
+    ));
     root.extend(Fat32::short_entry("OLD.PNG", 10, 4096, false, true, false));
     root.extend(Fat32::long_entries("._IMG_0002.JPG", "_IMG_0~1.JPG", true));
-    root.extend(Fat32::short_entry("_IMG_0~1.JPG", 700, 4096, false, true, false));
+    root.extend(Fat32::short_entry(
+        "_IMG_0~1.JPG",
+        700,
+        4096,
+        false,
+        true,
+        false,
+    ));
     root.extend(Fat32::short_entry("TRIP", 400, 0, true, true, false));
     image.put(Fat32::offset(2), &root);
     image.set_fat(2, 3);
     image.set_fat(3, 0x0FFF_FFFF);
     let mut trip = Fat32::short_entry(".", 400, 0, true, false, false);
-    trip.extend(Fat32::short_entry("DSC_0001.JPG", 500, photo.len(), false, true, false));
+    trip.extend(Fat32::short_entry(
+        "DSC_0001.JPG",
+        500,
+        photo.len(),
+        false,
+        true,
+        false,
+    ));
     image.put(Fat32::offset(400), &trip);
 
     let source = MemorySource(image.bytes);
-    let scan = filesystems::scan(&source, Partition { offset: 0, length: source.size() }, &|| false).unwrap();
+    let scan = filesystems::scan(
+        &source,
+        Partition {
+            offset: 0,
+            length: source.size(),
+        },
+        &|| false,
+    )
+    .unwrap();
     assert_eq!(scan.format, "FAT32");
-    let by_name: HashMap<String, _> = scan.files.iter().map(|f| (f.name.clone().unwrap(), f)).collect();
+    let by_name: HashMap<String, _> = scan
+        .files
+        .iter()
+        .map(|f| (f.name.clone().unwrap(), f))
+        .collect();
     let mut names: Vec<&str> = by_name.keys().map(String::as_str).collect();
     names.sort_unstable();
-    assert_eq!(names, ["DSC_0001.JPG", "Holiday photo.jpg", "IMG_0002.JPG", "_LD.PNG", "_ong.mp3"]);
+    assert_eq!(
+        names,
+        [
+            "DSC_0001.JPG",
+            "Holiday photo.jpg",
+            "IMG_0002.JPG",
+            "_LD.PNG",
+            "_ong.mp3"
+        ]
+    );
     let photo_file = by_name["IMG_0002.JPG"];
-    assert_eq!(photo_file.extents, vec![Extent { offset: Fat32::offset(100) as u64, length: photo.len() as u64 }]);
+    assert_eq!(
+        photo_file.extents,
+        vec![Extent {
+            offset: Fat32::offset(100) as u64,
+            length: photo.len() as u64
+        }]
+    );
     assert_eq!(photo_file.condition, Condition::Good);
-    assert_eq!(photo_file.date.map(|d| (d.year, d.month, d.day, d.hour, d.minute)), Some((2024, 7, 14, 18, 22)));
+    assert_eq!(
+        photo_file
+            .date
+            .map(|d| (d.year, d.month, d.day, d.hour, d.minute)),
+        Some((2024, 7, 14, 18, 22))
+    );
     assert_eq!(by_name["DSC_0001.JPG"].folder.as_deref(), Some("/_RIP/"));
     assert_eq!(by_name["_LD.PNG"].condition, Condition::Overwritten);
     let live = Fat32::offset(10) as u64;
     assert!(filesystems::overlaps(live..live + 512, &scan.allocated));
     let deleted = Fat32::offset(100) as u64;
-    assert!(!filesystems::overlaps(deleted..deleted + 512, &scan.allocated));
+    assert!(!filesystems::overlaps(
+        deleted..deleted + 512,
+        &scan.allocated
+    ));
 }
 
 #[test]
@@ -584,7 +756,10 @@ fn a_whole_scan_merges_named_and_found_files() {
     scan.run().unwrap();
     let files = scan.collect();
     assert_eq!(files.len(), 2);
-    let named = files.iter().find(|f| f.origin == Origin::Directory).unwrap();
+    let named = files
+        .iter()
+        .find(|f| f.origin == Origin::Directory)
+        .unwrap();
     // The lost first letter comes back from the camera's naming pattern.
     assert_eq!(named.name.as_deref(), Some("IMG_0042.JPG"));
     assert_eq!(named.format, Some(Format::Jpeg));
@@ -603,7 +778,10 @@ fn lost_first_letters_come_back_when_the_pattern_says_so() {
     assert_eq!(restore("_MG_0002.JPG", &siblings), "IMG_0002.JPG");
     assert_eq!(restore("_SC_0100.JPG", &[]), "DSC_0100.JPG");
     assert_eq!(restore("_lip.mp4", &["notes.txt".into()]), "_lip.mp4");
-    assert_eq!(restore("_AT_1.TXT", &["CAT_2.TXT".into(), "BAT_3.TXT".into()]), "_AT_1.TXT");
+    assert_eq!(
+        restore("_AT_1.TXT", &["CAT_2.TXT".into(), "BAT_3.TXT".into()]),
+        "_AT_1.TXT"
+    );
 }
 
 /// An exFAT volume with 512-byte sectors and clusters.
@@ -649,7 +827,13 @@ impl ExFat {
     }
 
     /// A file's directory entry set: file, stream extension and names.
-    fn file_set(name: &str, cluster: usize, size: usize, contiguous: bool, deleted: bool) -> Vec<u8> {
+    fn file_set(
+        name: &str,
+        cluster: usize,
+        size: usize,
+        contiguous: bool,
+        deleted: bool,
+    ) -> Vec<u8> {
         let units: Vec<u16> = name.encode_utf16().collect();
         let names = units.len().div_ceil(15);
         let mut file = vec![0u8; 32];
@@ -703,24 +887,51 @@ fn deleted_exfat_files_keep_names_and_fragments() {
     bitmap_entry[24..32].copy_from_slice(&le64(125));
     let mut root = bitmap_entry;
     root.extend(ExFat::file_set("live.jpg", 10, photo.len(), true, false));
-    root.extend(ExFat::file_set("Summer holiday photo.jpg", 100, photo.len(), true, true));
+    root.extend(ExFat::file_set(
+        "Summer holiday photo.jpg",
+        100,
+        photo.len(),
+        true,
+        true,
+    ));
     root.extend(ExFat::file_set("split.bin", 200, 2048, false, true));
     image.put(ExFat::offset(4), &root);
 
     let source = MemorySource(image.bytes);
-    let scan = filesystems::scan(&source, Partition { offset: 0, length: source.size() }, &|| false).unwrap();
+    let scan = filesystems::scan(
+        &source,
+        Partition {
+            offset: 0,
+            length: source.size(),
+        },
+        &|| false,
+    )
+    .unwrap();
     assert_eq!(scan.format, "exFAT");
-    let by_name: HashMap<String, _> = scan.files.iter().map(|f| (f.name.clone().unwrap(), f)).collect();
+    let by_name: HashMap<String, _> = scan
+        .files
+        .iter()
+        .map(|f| (f.name.clone().unwrap(), f))
+        .collect();
     assert_eq!(by_name.len(), 2);
     assert_eq!(
         by_name["Summer holiday photo.jpg"].extents,
-        vec![Extent { offset: ExFat::offset(100) as u64, length: photo.len() as u64 }]
+        vec![Extent {
+            offset: ExFat::offset(100) as u64,
+            length: photo.len() as u64
+        }]
     );
     assert_eq!(
         by_name["split.bin"].extents,
         vec![
-            Extent { offset: ExFat::offset(200) as u64, length: 1024 },
-            Extent { offset: ExFat::offset(300) as u64, length: 1024 },
+            Extent {
+                offset: ExFat::offset(200) as u64,
+                length: 1024
+            },
+            Extent {
+                offset: ExFat::offset(300) as u64,
+                length: 1024
+            },
         ]
     );
     let live = ExFat::offset(10) as u64;
@@ -738,7 +949,10 @@ fn partition_tables_are_read() {
     let source = MemorySource(disk.clone());
     assert_eq!(
         filesystems::partitions(&mut Reader::new(&source), 512),
-        [Partition { offset: 2048 * 512, length: 4096 * 512 }]
+        [Partition {
+            offset: 2048 * 512,
+            length: 4096 * 512
+        }]
     );
     // GPT behind a protective MBR.
     disk[446 + 4] = 0xEE;
@@ -752,11 +966,17 @@ fn partition_tables_are_read() {
     let source = MemorySource(disk);
     assert_eq!(
         filesystems::partitions(&mut Reader::new(&source), 512),
-        [Partition { offset: 40 * 512, length: 4000 * 512 }]
+        [Partition {
+            offset: 40 * 512,
+            length: 4000 * 512
+        }]
     );
     // A card formatted without a table.
     let card = MemorySource(Fat32::new().bytes);
-    assert_eq!(filesystems::partitions(&mut Reader::new(&card), 512).len(), 1);
+    assert_eq!(
+        filesystems::partitions(&mut Reader::new(&card), 512).len(),
+        1
+    );
 }
 
 #[test]
@@ -771,7 +991,14 @@ fn exported_files_match_the_originals() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].offset(), offset);
     let destination = std::env::temp_dir().join(format!("procmon-export-{}", std::process::id()));
-    let report = super::export(&files, scan.source().as_ref(), "card", &destination, &super::ExportProgress::default()).unwrap();
+    let report = super::export(
+        &files,
+        scan.source().as_ref(),
+        "card",
+        &destination,
+        &super::ExportProgress::default(),
+    )
+    .unwrap();
     assert_eq!(report.saved, 1);
     assert!(report.failures.is_empty());
     let saved = report.folder.join("Photos").join(files[0].display_name());
@@ -791,7 +1018,13 @@ fn recover_live() {
     scan.run().unwrap();
     let mut files = scan.collect();
     files.sort_by_key(super::FoundFile::offset);
-    println!("{} bytes in {:?}; {:?}; {} files", scan.source().size(), started.elapsed(), scan.file_systems(), files.len());
+    println!(
+        "{} bytes in {:?}; {:?}; {} files",
+        scan.source().size(),
+        started.elapsed(),
+        scan.file_systems(),
+        files.len()
+    );
     for file in &files {
         println!(
             "  {:?} {:?} {} {} bytes at {} {:?} {}",
@@ -805,7 +1038,14 @@ fn recover_live() {
         );
     }
     if let Ok(out) = std::env::var("RECOVER_OUT") {
-        let report = super::export(&files, scan.source().as_ref(), "image", std::path::Path::new(&out), &super::ExportProgress::default()).unwrap();
+        let report = super::export(
+            &files,
+            scan.source().as_ref(),
+            "image",
+            std::path::Path::new(&out),
+            &super::ExportProgress::default(),
+        )
+        .unwrap();
         println!("saved {} to {}", report.saved, report.folder.display());
     }
 }

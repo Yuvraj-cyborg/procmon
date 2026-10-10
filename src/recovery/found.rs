@@ -16,7 +16,13 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [Kind::Photo, Kind::Video, Kind::Audio, Kind::Document, Kind::Other];
+    pub const ALL: [Kind; 5] = [
+        Kind::Photo,
+        Kind::Video,
+        Kind::Audio,
+        Kind::Document,
+        Kind::Other,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -28,21 +34,13 @@ impl Kind {
         }
     }
 
-    /// "photo", "video", … for counts.
-    pub fn noun(self) -> &'static str {
-        match self {
-            Kind::Photo => "photo",
-            Kind::Video => "video",
-            Kind::Audio => "audio file",
-            Kind::Document => "document",
-            Kind::Other => "other file",
-        }
-    }
-
     /// The kind a file name suggests, for directory entries.
     pub fn guess(name: &str) -> Kind {
         let ext = extension(name);
-        if let Some(format) = Format::ALL.iter().find(|f| f.extensions().contains(&ext.as_str())) {
+        if let Some(format) = Format::ALL
+            .iter()
+            .find(|f| f.extensions().contains(&ext.as_str()))
+        {
             return format.kind();
         }
         match ext.as_str() {
@@ -304,6 +302,10 @@ impl Timestamp {
     }
 
     /// Seconds since 1970 if this were UTC.
+    #[cfg_attr(
+        unix,
+        allow(dead_code, reason = "Unix converts local dates with mktime")
+    )]
     pub fn as_unix(self) -> i64 {
         let (year, month) = (i64::from(self.year), i64::from(self.month));
         let year = if month <= 2 { year - 1 } else { year };
@@ -447,7 +449,10 @@ mod tests {
             id: 42,
             format: Some(Format::Jpeg),
             kind: Kind::Photo,
-            extents: vec![Extent { offset: 512, length: 100 }],
+            extents: vec![Extent {
+                offset: 512,
+                length: 100,
+            }],
             name: None,
             folder: None,
             date: None,

@@ -3,7 +3,7 @@
 use std::fs::{self, File};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use super::found::{FoundFile, Timestamp};
 use super::reader::{ByteSource, ReadError};
@@ -13,7 +13,6 @@ use crate::units::Bytes;
 pub struct ExportProgress {
     files: AtomicUsize,
     bytes: AtomicU64,
-    cancelled: AtomicBool,
 }
 
 impl ExportProgress {
@@ -23,14 +22,6 @@ impl ExportProgress {
 
     pub fn bytes(&self) -> Bytes {
         Bytes(self.bytes.load(Ordering::Relaxed))
-    }
-
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed)
     }
 }
 
@@ -69,11 +60,14 @@ pub fn export(
     };
     let mut buffer = vec![0u8; 1 << 20];
     for file in files {
-        if progress.is_cancelled() {
-            break;
-        }
         let mut directory = folder.join(file.kind.label());
-        for part in file.folder.as_deref().unwrap_or_default().split('/').filter(|p| !p.is_empty()) {
+        for part in file
+            .folder
+            .as_deref()
+            .unwrap_or_default()
+            .split('/')
+            .filter(|p| !p.is_empty())
+        {
             directory.push(safe(part));
         }
         let outcome = fs::create_dir_all(&directory).and_then(|()| {
@@ -92,7 +86,9 @@ pub fn export(
                 report.bytes += file.size();
                 report.unreadable += Bytes(lost);
             }
-            Err(err) => report.failures.push(format!("{}: {err}", file.display_name())),
+            Err(err) => report
+                .failures
+                .push(format!("{}: {err}", file.display_name())),
         }
         progress.files.fetch_add(1, Ordering::Relaxed);
     }
@@ -100,7 +96,13 @@ pub fn export(
 }
 
 /// Returns the bytes that could not be read and were written as zeros.
-fn copy(file: &FoundFile, source: &dyn ByteSource, path: &Path, buffer: &mut [u8], progress: &ExportProgress) -> io::Result<u64> {
+fn copy(
+    file: &FoundFile,
+    source: &dyn ByteSource,
+    path: &Path,
+    buffer: &mut [u8],
+    progress: &ExportProgress,
+) -> io::Result<u64> {
     let mut output = io::BufWriter::new(File::create(path)?);
     let mut lost = 0;
     for extent in &file.extents {
@@ -111,7 +113,10 @@ fn copy(file: &FoundFile, source: &dyn ByteSource, path: &Path, buffer: &mut [u8
             let got = match source.read_at(slice, position) {
                 Ok(got) => got,
                 Err(ReadError::Disconnected) => {
-                    return Err(io::Error::new(io::ErrorKind::NotFound, "the disk was disconnected"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "the disk was disconnected",
+                    ));
                 }
                 Err(ReadError::Unreadable) => {
                     slice.fill(0);
@@ -136,16 +141,35 @@ fn copy(file: &FoundFile, source: &dyn ByteSource, path: &Path, buffer: &mut [u8
 pub fn safe(name: &str) -> String {
     let mut cleaned: String = name
         .chars()
-        .map(|c| if matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*') || c.is_control() { '-' } else { c })
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*') || c.is_control() {
+                '-'
+            } else {
+                c
+            }
+        })
         .collect();
-    cleaned = cleaned.trim_start_matches('.').trim_end_matches(['.', ' ']).to_string();
+    cleaned = cleaned
+        .trim_start_matches('.')
+        .trim_end_matches(['.', ' '])
+        .to_string();
     if cleaned.is_empty() {
         return "Untitled".into();
     }
-    let stem = cleaned.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    let stem = cleaned
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
     let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.ends_with(|c: char| c.is_ascii_digit()));
-    if reserved { format!("_{cleaned}") } else { cleaned }
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.ends_with(|c: char| c.is_ascii_digit()));
+    if reserved {
+        format!("_{cleaned}")
+    } else {
+        cleaned
+    }
 }
 
 /// `name 2.ext`, `name 3.ext`… when the name is taken.
@@ -154,13 +178,18 @@ pub fn unique(path: &Path) -> PathBuf {
         return path.to_path_buf();
     }
     let parent = path.parent().unwrap_or(Path::new("."));
-    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let ext = path.extension().map(|e| e.to_string_lossy().into_owned());
     (2..)
-        .map(|n| parent.join(match &ext {
-            Some(ext) => format!("{stem} {n}.{ext}"),
-            None => format!("{stem} {n}"),
-        }))
+        .map(|n| {
+            parent.join(match &ext {
+                Some(ext) => format!("{stem} {n}.{ext}"),
+                None => format!("{stem} {n}"),
+            })
+        })
         .find(|candidate| !candidate.exists())
         .unwrap_or_else(|| path.to_path_buf())
 }

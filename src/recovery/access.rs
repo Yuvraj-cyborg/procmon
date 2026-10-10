@@ -17,8 +17,16 @@ use super::reader::RawDevice;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccessError {
     /// The password prompt was dismissed.
+    #[cfg_attr(
+        not(target_os = "linux"),
+        allow(dead_code, reason = "only Linux asks for a password")
+    )]
     Cancelled,
     /// Windows: only an administrator can read disks directly.
+    #[cfg_attr(
+        not(windows),
+        allow(dead_code, reason = "only Windows needs elevation")
+    )]
     NeedsAdministrator,
     Failed(String),
 }
@@ -26,8 +34,12 @@ pub enum AccessError {
 impl std::fmt::Display for AccessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AccessError::Cancelled => f.write_str("Reading the disk needs an administrator's password."),
-            AccessError::NeedsAdministrator => f.write_str("Reading disks directly needs administrator rights."),
+            AccessError::Cancelled => {
+                f.write_str("Reading the disk needs an administrator's password.")
+            }
+            AccessError::NeedsAdministrator => {
+                f.write_str("Reading disks directly needs administrator rights.")
+            }
             AccessError::Failed(detail) => write!(f, "The disk couldn't be opened: {detail}"),
         }
     }
@@ -36,7 +48,9 @@ impl std::fmt::Display for AccessError {
 /// Opens `disk` read-only, asking for permission only if it must. Blocks
 /// while a password prompt is up: never call on the UI thread.
 pub fn open(disk: &Disk) -> Result<RawDevice, AccessError> {
-    let device = |file: File| RawDevice::from_file(file, &disk.path).map_err(|e| AccessError::Failed(e.to_string()));
+    let device = |file: File| {
+        RawDevice::from_file(file, &disk.path).map_err(|e| AccessError::Failed(e.to_string()))
+    };
     match open_direct(disk) {
         Ok(file) => device(file),
         Err(err) if err.kind() == io::ErrorKind::PermissionDenied => device(open_authorized(disk)?),
@@ -71,18 +85,32 @@ fn open_authorized(disk: &Disk) -> Result<File, AccessError> {
     let escaped: String = disk
         .id
         .bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || b == b'_' { char::from(b).to_string() } else { format!("_{b:02x}") })
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                char::from(b).to_string()
+            } else {
+                format!("_{b:02x}")
+            }
+        })
         .collect();
     let path = format!("/org/freedesktop/UDisks2/block_devices/{escaped}");
     let result: zbus::Result<OwnedFd> = async_io::block_on(async {
         let connection = zbus::Connection::system().await?;
-        let proxy = zbus::Proxy::new(&connection, "org.freedesktop.UDisks2", path.as_str(), "org.freedesktop.UDisks2.Block").await?;
+        let proxy = zbus::Proxy::new(
+            &connection,
+            "org.freedesktop.UDisks2",
+            path.as_str(),
+            "org.freedesktop.UDisks2.Block",
+        )
+        .await?;
         let options: HashMap<&str, Value> = HashMap::new();
         proxy.call("OpenDevice", &("r", options)).await
     });
     match result {
         Ok(fd) => Ok(File::from(std::os::fd::OwnedFd::from(fd))),
-        Err(zbus::Error::MethodError(name, _, _)) if name.as_str().contains("NotAuthorized") => Err(AccessError::Cancelled),
+        Err(zbus::Error::MethodError(name, _, _)) if name.as_str().contains("NotAuthorized") => {
+            Err(AccessError::Cancelled)
+        }
         Err(err) => Err(AccessError::Failed(format!(
             "{err}. Install udisks2, or run Procmon with sudo to read disks directly"
         ))),
@@ -96,14 +124,18 @@ fn open_authorized(_disk: &Disk) -> Result<File, AccessError> {
 
 #[cfg(not(any(target_os = "linux", windows)))]
 fn open_authorized(_disk: &Disk) -> Result<File, AccessError> {
-    Err(AccessError::Failed("run Procmon with sudo to read disks directly".into()))
+    Err(AccessError::Failed(
+        "run Procmon with sudo to read disks directly".into(),
+    ))
 }
 
 /// Whether this process may read disks directly.
 #[cfg(windows)]
 pub fn is_elevated() -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+    };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     // SAFETY: the token handle is closed before returning; the output is plain data.
     unsafe {
@@ -137,9 +169,15 @@ pub fn relaunch_elevated() -> bool {
     use std::os::windows::ffi::OsStrExt as _;
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    let Ok(exe) = std::env::current_exe() else { return false };
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
     let wide = |text: &std::ffi::OsStr| text.encode_wide().chain([0]).collect::<Vec<u16>>();
-    let (verb, file, parameters) = (wide("runas".as_ref()), wide(exe.as_os_str()), wide("--page recovery".as_ref()));
+    let (verb, file, parameters) = (
+        wide("runas".as_ref()),
+        wide(exe.as_os_str()),
+        wide("--page recovery".as_ref()),
+    );
     // SAFETY: NUL-terminated strings that outlive the call.
     let result = unsafe {
         ShellExecuteW(

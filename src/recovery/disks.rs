@@ -42,7 +42,11 @@ impl Disk {
     pub fn summary(&self) -> String {
         let mut parts = vec![self.size.decimal().to_string()];
         parts.extend(self.connection.clone());
-        let names: Vec<&str> = self.volumes.iter().filter_map(|v| v.name.as_deref()).collect();
+        let names: Vec<&str> = self
+            .volumes
+            .iter()
+            .filter_map(|v| v.name.as_deref())
+            .collect();
         if !names.is_empty() {
             parts.push(names.join(", "));
         }
@@ -85,9 +89,12 @@ fn parse_mounts(text: &str) -> std::collections::HashMap<String, (PathBuf, Strin
             let device = fields.next()?;
             let mount = fields.next()?.replace("\\040", " ").replace("\\011", "\t");
             let format = fields.next()?;
-            device
-                .starts_with("/dev/")
-                .then(|| (device.to_string(), (PathBuf::from(mount), format.to_string())))
+            device.starts_with("/dev/").then(|| {
+                (
+                    device.to_string(),
+                    (PathBuf::from(mount), format.to_string()),
+                )
+            })
         })
         .collect()
 }
@@ -102,8 +109,12 @@ mod platform {
     use crate::units::Bytes;
 
     pub fn list() -> Vec<Disk> {
-        let mounts = fs::read_to_string("/proc/self/mounts").map(|text| parse_mounts(&text)).unwrap_or_default();
-        let Ok(entries) = fs::read_dir("/sys/block") else { return Vec::new() };
+        let mounts = fs::read_to_string("/proc/self/mounts")
+            .map(|text| parse_mounts(&text))
+            .unwrap_or_default();
+        let Ok(entries) = fs::read_dir("/sys/block") else {
+            return Vec::new();
+        };
         entries
             .flatten()
             .filter_map(|entry| disk(&entry.path(), &entry.file_name().to_string_lossy(), &mounts))
@@ -117,7 +128,10 @@ mod platform {
     }
 
     fn disk(sys: &Path, name: &str, mounts: &HashMap<String, (PathBuf, String)>) -> Option<Disk> {
-        if ["ram", "zram", "dm-", "md", "sr", "fd", "nbd"].iter().any(|p| name.starts_with(p)) {
+        if ["ram", "zram", "dm-", "md", "sr", "fd", "nbd"]
+            .iter()
+            .any(|p| name.starts_with(p))
+        {
             return None;
         }
         let size = read(sys.join("size"))?.parse::<u64>().ok()? * 512;
@@ -129,7 +143,9 @@ mod platform {
         if image && backing.is_none() {
             return None;
         }
-        let device = fs::canonicalize(sys.join("device")).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        let device = fs::canonicalize(sys.join("device"))
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let usb = device.contains("/usb");
         let card = name.starts_with("mmcblk");
         let removable = read(sys.join("removable")).as_deref() == Some("1");
@@ -152,7 +168,9 @@ mod platform {
             DiskKind::Internal
         };
         let label = match &backing {
-            Some(file) => Path::new(file).file_name().map(|n| n.to_string_lossy().into_owned()),
+            Some(file) => Path::new(file)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned()),
             None if card => read(sys.join("device/name")),
             None => {
                 let vendor = read(sys.join("device/vendor")).unwrap_or_default();
@@ -185,7 +203,11 @@ mod platform {
         })
     }
 
-    fn volume(sys: &Path, name: &str, mounts: &HashMap<String, (PathBuf, String)>) -> Option<DiskVolume> {
+    fn volume(
+        sys: &Path,
+        name: &str,
+        mounts: &HashMap<String, (PathBuf, String)>,
+    ) -> Option<DiskVolume> {
         let size = read(sys.join("size"))?.parse::<u64>().ok()? * 512;
         let udev = read(sys.join("dev"))
             .and_then(|dev| fs::read_to_string(format!("/run/udev/data/b{dev}")).ok())
@@ -194,7 +216,10 @@ mod platform {
         let mount = mounts.get(&format!("/dev/{name}"));
         Some(DiskVolume {
             name: udev.get("ID_FS_LABEL").cloned(),
-            format: udev.get("ID_FS_TYPE").cloned().or_else(|| mount.map(|(_, fs)| fs.clone())),
+            format: udev
+                .get("ID_FS_TYPE")
+                .cloned()
+                .or_else(|| mount.map(|(_, fs)| fs.clone())),
             size: Bytes(size),
             mount_point: mount.map(|(path, _)| path.clone()),
         })
@@ -207,7 +232,11 @@ mod platform {
         let dev = fs::metadata(path).ok()?.dev();
         let (major, minor) = (libc::major(dev), libc::minor(dev));
         let device = fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok()?;
-        let disk = if device.join("partition").exists() { device.parent()? } else { device.as_path() };
+        let disk = if device.join("partition").exists() {
+            device.parent()?
+        } else {
+            device.as_path()
+        };
         Some(disk.file_name()?.to_string_lossy().into_owned())
     }
 }
@@ -224,21 +253,25 @@ mod platform {
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDiskFreeSpaceExW, GetLogicalDrives, GetVolumeInformationW,
-        GetVolumePathNameW, OPEN_EXISTING,
+        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDiskFreeSpaceExW, GetLogicalDrives,
+        GetVolumeInformationW, GetVolumePathNameW, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::IO::DeviceIoControl;
     use windows_sys::Win32::System::Ioctl::{
-        DISK_GEOMETRY_EX, GET_LENGTH_INFORMATION, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX, IOCTL_DISK_GET_LENGTH_INFO,
-        IOCTL_STORAGE_GET_DEVICE_NUMBER, IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_DEVICE_DESCRIPTOR,
-        STORAGE_DEVICE_NUMBER, STORAGE_PROPERTY_QUERY, StorageDeviceProperty,
+        DISK_GEOMETRY_EX, GET_LENGTH_INFORMATION, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+        IOCTL_DISK_GET_LENGTH_INFO, IOCTL_STORAGE_GET_DEVICE_NUMBER, IOCTL_STORAGE_QUERY_PROPERTY,
+        PropertyStandardQuery, STORAGE_DEVICE_DESCRIPTOR, STORAGE_DEVICE_NUMBER,
+        STORAGE_PROPERTY_QUERY, StorageDeviceProperty,
     };
 
     use super::{Disk, DiskKind, DiskVolume};
     use crate::units::Bytes;
 
     fn wide(text: &str) -> Vec<u16> {
-        std::ffi::OsStr::new(text).encode_wide().chain([0]).collect()
+        std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain([0])
+            .collect()
     }
 
     /// Opens a device for queries only: no access rights, so no administrator needed.
@@ -246,7 +279,15 @@ mod platform {
         let name = wide(path);
         // SAFETY: a NUL-terminated name and no security attributes or template.
         let handle = unsafe {
-            CreateFileW(name.as_ptr(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, std::ptr::null(), OPEN_EXISTING, 0, std::ptr::null_mut())
+            CreateFileW(
+                name.as_ptr(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            )
         };
         (handle != INVALID_HANDLE_VALUE).then_some(handle)
     }
@@ -254,7 +295,9 @@ mod platform {
     /// Runs an ioctl that fills `output`; `false` when the device refused.
     fn control<T>(handle: HANDLE, code: u32, input: Option<&[u8]>, output: &mut T) -> bool {
         let mut returned = 0u32;
-        let (input_pointer, input_size) = input.map_or((std::ptr::null(), 0), |i| (i.as_ptr().cast::<c_void>(), i.len() as u32));
+        let (input_pointer, input_size) = input.map_or((std::ptr::null(), 0), |i| {
+            (i.as_ptr().cast::<c_void>(), i.len() as u32)
+        });
         // SAFETY: the buffers are valid for the sizes passed, and the call is synchronous.
         unsafe {
             DeviceIoControl(
@@ -273,7 +316,8 @@ mod platform {
     fn device_number(handle: HANDLE) -> Option<u32> {
         // SAFETY: plain data, filled by the ioctl.
         let mut number: STORAGE_DEVICE_NUMBER = unsafe { std::mem::zeroed() };
-        control(handle, IOCTL_STORAGE_GET_DEVICE_NUMBER, None, &mut number).then_some(number.DeviceNumber)
+        control(handle, IOCTL_STORAGE_GET_DEVICE_NUMBER, None, &mut number)
+            .then_some(number.DeviceNumber)
     }
 
     /// Volumes with drive letters, by the number of the disk they are on.
@@ -286,7 +330,9 @@ mod platform {
                 continue;
             }
             let letter = char::from(b'A' + index);
-            let Some(handle) = open_query(&format!(r"\\.\{letter}:")) else { continue };
+            let Some(handle) = open_query(&format!(r"\\.\{letter}:")) else {
+                continue;
+            };
             let number = device_number(handle);
             // SAFETY: the handle came from CreateFileW.
             unsafe { CloseHandle(handle) };
@@ -307,10 +353,17 @@ mod platform {
                     system.as_mut_ptr(),
                     system.len() as u32,
                 );
-                GetDiskFreeSpaceExW(root.as_ptr(), std::ptr::null_mut(), &mut total, std::ptr::null_mut());
+                GetDiskFreeSpaceExW(
+                    root.as_ptr(),
+                    std::ptr::null_mut(),
+                    &mut total,
+                    std::ptr::null_mut(),
+                );
             }
             let text = |buffer: &[u16]| {
-                let text = String::from_utf16_lossy(&buffer[..buffer.iter().position(|c| *c == 0).unwrap_or(buffer.len())]);
+                let text = String::from_utf16_lossy(
+                    &buffer[..buffer.iter().position(|c| *c == 0).unwrap_or(buffer.len())],
+                );
                 (!text.is_empty()).then_some(text)
             };
             found.entry(number).or_default().push(DiskVolume {
@@ -332,7 +385,12 @@ mod platform {
                 let described = describe(handle);
                 // SAFETY: plain data, filled by the ioctl.
                 let mut geometry: DISK_GEOMETRY_EX = unsafe { std::mem::zeroed() };
-                let sized = control(handle, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX, None, &mut geometry);
+                let sized = control(
+                    handle,
+                    IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+                    None,
+                    &mut geometry,
+                );
                 // SAFETY: the handle came from CreateFileW.
                 unsafe { CloseHandle(handle) };
                 let (name, bus, removable) = described?;
@@ -378,29 +436,50 @@ mod platform {
         query.QueryType = PropertyStandardQuery;
         // SAFETY: the query is plain data viewed as bytes.
         let input = unsafe {
-            std::slice::from_raw_parts(std::ptr::from_ref(&query).cast::<u8>(), size_of::<STORAGE_PROPERTY_QUERY>())
+            std::slice::from_raw_parts(
+                std::ptr::from_ref(&query).cast::<u8>(),
+                size_of::<STORAGE_PROPERTY_QUERY>(),
+            )
         };
         let mut buffer = [0u8; 1024];
-        if !control(handle, IOCTL_STORAGE_QUERY_PROPERTY, Some(input), &mut buffer) {
+        if !control(
+            handle,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            Some(input),
+            &mut buffer,
+        ) {
             return None;
         }
         // SAFETY: the ioctl wrote a STORAGE_DEVICE_DESCRIPTOR at the start of the buffer.
-        let descriptor: STORAGE_DEVICE_DESCRIPTOR = unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast()) };
+        let descriptor: STORAGE_DEVICE_DESCRIPTOR =
+            unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast()) };
         let text = |offset: u32| {
             let start = offset as usize;
             if start == 0 || start >= buffer.len() {
                 return None;
             }
-            let end = buffer[start..].iter().position(|b| *b == 0).map_or(buffer.len(), |i| start + i);
-            let text = String::from_utf8_lossy(&buffer[start..end]).trim().to_string();
+            let end = buffer[start..]
+                .iter()
+                .position(|b| *b == 0)
+                .map_or(buffer.len(), |i| start + i);
+            let text = String::from_utf8_lossy(&buffer[start..end])
+                .trim()
+                .to_string();
             (!text.is_empty()).then_some(text)
         };
-        let name = [text(descriptor.VendorIdOffset), text(descriptor.ProductIdOffset)]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" ");
-        Some(((!name.is_empty()).then_some(name), descriptor.BusType, descriptor.RemovableMedia))
+        let name = [
+            text(descriptor.VendorIdOffset),
+            text(descriptor.ProductIdOffset),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+        Some((
+            (!name.is_empty()).then_some(name),
+            descriptor.BusType,
+            descriptor.RemovableMedia,
+        ))
     }
 
     /// Size and sector size of an open disk.
@@ -413,7 +492,12 @@ mod platform {
         }
         // SAFETY: as above.
         let mut geometry: DISK_GEOMETRY_EX = unsafe { std::mem::zeroed() };
-        let sector = if control(handle, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX, None, &mut geometry) {
+        let sector = if control(
+            handle,
+            IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
+            None,
+            &mut geometry,
+        ) {
             geometry.Geometry.BytesPerSector as usize
         } else {
             512
@@ -458,10 +542,12 @@ mod tests {
 
     #[test]
     fn reads_udev_properties_and_mounts() {
-        let udev = parse_udev("S:disk/by-label/CARD\nE:ID_FS_TYPE=vfat\nE:ID_FS_LABEL=CARD\nG:systemd\n");
+        let udev =
+            parse_udev("S:disk/by-label/CARD\nE:ID_FS_TYPE=vfat\nE:ID_FS_LABEL=CARD\nG:systemd\n");
         assert_eq!(udev.get("ID_FS_TYPE").map(String::as_str), Some("vfat"));
         assert_eq!(udev.get("ID_FS_LABEL").map(String::as_str), Some("CARD"));
-        let mounts = parse_mounts("/dev/sdb1 /media/me/MY\\040CARD vfat rw 0 0\nproc /proc proc rw 0 0\n");
+        let mounts =
+            parse_mounts("/dev/sdb1 /media/me/MY\\040CARD vfat rw 0 0\nproc /proc proc rw 0 0\n");
         assert_eq!(mounts["/dev/sdb1"].0.to_string_lossy(), "/media/me/MY CARD");
         assert_eq!(mounts.len(), 1);
     }

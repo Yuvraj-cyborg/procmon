@@ -99,7 +99,9 @@ pub fn parser_for(head: &[u8]) -> Option<Parser> {
         b'B' if head[1] == b'M' => photo::bmp,
         b'R' if starts(b"RIFF") => media::riff,
         b'I' if starts(b"ID3") => media::mp3,
-        b'I' if starts(&[0x49, 0x49, 0x2A, 0x00]) || starts(b"IIRO") || starts(b"IIRS") => photo::tiff,
+        b'I' if starts(&[0x49, 0x49, 0x2A, 0x00]) || starts(b"IIRO") || starts(b"IIRS") => {
+            photo::tiff
+        }
         b'M' if starts(&[0x4D, 0x4D, 0x00, 0x2A]) || starts(b"MMOR") => photo::tiff,
         b'F' if starts(b"FUJIFILMCCD-RAW ") => photo::raf,
         // Most blocks of free space are zeros: this is the cheap check for them.
@@ -159,7 +161,11 @@ pub fn scan(
                 found(carved, offset);
                 // A complete file is skipped whole. A damaged one is only a
                 // guess, so whatever lies inside it is still searched.
-                let end = if carved.condition == Condition::Good { offset + carved.length } else { offset + 1 };
+                let end = if carved.condition == Condition::Good {
+                    offset + carved.length
+                } else {
+                    offset + 1
+                };
                 let next = end.div_ceil(BLOCK) * BLOCK;
                 if next > offset + BLOCK {
                     resume = next;
@@ -177,7 +183,12 @@ pub fn scan(
 
 /// Fills `buffer` from `offset`; unreadable stretches become zeros and are
 /// counted, so one bad patch does not end the scan.
-fn read(source: &dyn ByteSource, buffer: &mut [u8], offset: u64, progress: &Progress) -> Result<usize, ReadError> {
+fn read(
+    source: &dyn ByteSource,
+    buffer: &mut [u8],
+    offset: u64,
+    progress: &Progress,
+) -> Result<usize, ReadError> {
     match source.read_at(buffer, offset) {
         Ok(read) => Ok(read),
         Err(ReadError::Disconnected) => Err(ReadError::Disconnected),
