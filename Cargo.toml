@@ -46,6 +46,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[dev-dependencies]
+# Checks the Linux benchmark's WGSL on any machine.
+naga = { version = "29", default-features = false, features = ["wgsl-in"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 libproc = "0.14.11"
 mach2 = "0.7.0"

@@ -33,7 +33,9 @@ impl BenchTest {
     pub fn format(self, value: f64) -> String {
         match self {
             // FLOPS count a fused multiply-add as two operations.
-            BenchTest::Fp32 | BenchTest::Fp16 if value >= 1e12 => format!("{:.2} TFLOPS", value / 1e12),
+            BenchTest::Fp32 | BenchTest::Fp16 if value >= 1e12 => {
+                format!("{:.2} TFLOPS", value / 1e12)
+            }
             BenchTest::Fp32 | BenchTest::Fp16 => format!("{:.0} GFLOPS", value / 1e9),
             BenchTest::Bandwidth => format!("{:.0} GB/s", value / 1e9),
         }
@@ -51,10 +53,17 @@ pub struct BenchRecord {
 
 impl BenchRecord {
     pub fn value(&self, test: BenchTest) -> Option<f64> {
-        self.values.iter().find(|(t, _)| *t == test).map(|(_, v)| *v)
+        self.values
+            .iter()
+            .find(|(t, _)| *t == test)
+            .map(|(_, v)| *v)
     }
 }
 
+#[cfg_attr(
+    not(any(target_os = "linux", windows)),
+    allow(dead_code, reason = "only the Linux and Windows backends reach a GPU")
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BenchError {
     NoGpu,
@@ -98,7 +107,9 @@ impl Benchmark {
     /// Sets up shaders on the system's main GPU. Slow (it compiles shaders):
     /// call off the UI thread.
     pub fn open() -> Result<Self, BenchError> {
-        Ok(Self { backend: platform::open()? })
+        Ok(Self {
+            backend: platform::open()?,
+        })
     }
 
     pub fn gpu_name(&self) -> String {
@@ -136,7 +147,12 @@ impl Benchmark {
 
     /// Runs the 32-bit test back to back for `duration`, reporting each
     /// second's speed, to show whether the GPU slows down as it heats up.
-    pub fn sustain(&mut self, duration: Duration, cancel: &AtomicBool, mut report: impl FnMut(f64)) -> Result<(), BenchError> {
+    pub fn sustain(
+        &mut self,
+        duration: Duration,
+        cancel: &AtomicBool,
+        mut report: impl FnMut(f64),
+    ) -> Result<(), BenchError> {
         let loops = self.calibrate(BenchTest::Fp32)?;
         let start = Instant::now();
         while start.elapsed() < duration && !cancel.load(Ordering::Relaxed) {
@@ -161,21 +177,20 @@ impl Benchmark {
             if seconds >= TARGET / 2.0 {
                 break;
             }
-            let scale = if seconds > 0.0 { (TARGET / seconds).min(16.0) } else { 16.0 };
+            let scale = if seconds > 0.0 {
+                (TARGET / seconds).min(16.0)
+            } else {
+                16.0
+            };
             loops = (f64::from(loops) * scale).min(1_000_000.0) as u32;
         }
         Ok(loops)
     }
 }
 
-#[cfg(target_os = "linux")]
-mod platform {
-    use std::time::Instant;
-
-    use super::{Backend, BenchError, BenchTest, THREADS};
-
-    /// `SCALAR` becomes `f32` or `f16`.
-    const COMPUTE: &str = "
+/// The WGSL compute kernel; `SCALAR` becomes `f32` or `f16`.
+#[cfg(any(target_os = "linux", test))]
+const COMPUTE: &str = "
 struct Params { loops: u32, pad0: u32, pad1: u32, pad2: u32 }
 @group(0) @binding(0) var<storage, read_write> output: array<vec4<SCALAR>>;
 @group(0) @binding(1) var<uniform> params: Params;
@@ -195,18 +210,26 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 ";
 
-    const COPY: &str = "
+/// The WGSL memory-streaming kernel.
+#[cfg(any(target_os = "linux", test))]
+const COPY: &str = "
 @group(0) @binding(0) var<storage, read> source: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read_write> target: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> destination: array<vec4<f32>>;
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let stride = groups.x * 256u;
-    let count = arrayLength(&target);
+    let count = arrayLength(&destination);
     for (var i = id.x; i < count; i = i + stride) {
-        target[i] = source[i];
+        destination[i] = source[i];
     }
 }
 ";
+
+#[cfg(target_os = "linux")]
+mod platform {
+    use std::time::Instant;
+
+    use super::{Backend, BenchError, BenchTest, COMPUTE, COPY, THREADS};
 
     struct Kernel {
         pipeline: wgpu::ComputePipeline,
@@ -238,7 +261,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) g
         let limits = adapter.limits();
         let (device, queue) = async_io::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("benchmark"),
-            required_features: if half { wgpu::Features::SHADER_F16 } else { wgpu::Features::empty() },
+            required_features: if half {
+                wgpu::Features::SHADER_F16
+            } else {
+                wgpu::Features::empty()
+            },
             required_limits: limits.clone(),
             ..Default::default()
         }))
@@ -275,20 +302,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) g
                 label: None,
                 layout: &pipeline.get_bind_group_layout(0),
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: buffers[0].as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: buffers[1].as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffers[0].as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: buffers[1].as_entire_binding(),
+                    },
                 ],
             });
             Kernel { pipeline, bindings }
         };
-        let fp32 = kernel(&COMPUTE.replace("SCALAR", "f32"), [&storage(THREADS * 16), &params]);
+        let fp32 = kernel(
+            &COMPUTE.replace("SCALAR", "f32"),
+            [&storage(THREADS * 16), &params],
+        );
         let fp16 = half.then(|| {
             let source = format!("enable f16;\n{}", COMPUTE.replace("SCALAR", "f16"));
             kernel(&source, [&storage(THREADS * 8), &params])
         });
         // Large enough to spill out of any cache, within what the GPU allows.
         let copy_bytes = (256u64 << 20)
-            .min(u64::from(limits.max_storage_buffer_binding_size))
+            .min(limits.max_storage_buffer_binding_size)
             .min(limits.max_buffer_size)
             / 4096
             * 4096;
@@ -313,7 +349,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) g
                 Which::Fp16 => self.fp16.as_ref().ok_or(BenchError::Unsupported)?,
                 Which::Copy => &self.copy,
             };
-            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
                 pass.set_pipeline(&kernel.pipeline);
@@ -351,7 +389,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) g
             let mut params = [0u8; 16];
             params[..4].copy_from_slice(&loops.to_le_bytes());
             self.queue.write_buffer(&self.params, 0, &params);
-            let which = if test == BenchTest::Fp16 { Which::Fp16 } else { Which::Fp32 };
+            let which = if test == BenchTest::Fp16 {
+                Which::Fp16
+            } else {
+                Which::Fp32
+            };
             self.run(which, (THREADS / 256) as u32, 1)
         }
 
@@ -367,7 +409,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) g
 mod platform {
     use windows::Win32::Foundation::HMODULE;
     use windows::Win32::Graphics::Direct3D::Fxc::{D3DCOMPILE_OPTIMIZATION_LEVEL3, D3DCompile};
-    use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0, ID3DBlob};
+    use windows::Win32::Graphics::Direct3D::{
+        D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0, ID3DBlob,
+    };
     use windows::Win32::Graphics::Direct3D11::*;
     use windows::Win32::Graphics::Dxgi::IDXGIDevice;
     use windows::core::{Interface as _, PCSTR};
@@ -436,8 +480,10 @@ StructuredBuffer<float4> source : register(t0);
                 Some(&mut context),
             )
             .map_err(|_| BenchError::NoGpu)?;
-            let (device, context): (ID3D11Device, ID3D11DeviceContext) =
-                (device.ok_or(BenchError::NoGpu)?, context.ok_or(BenchError::NoGpu)?);
+            let (device, context): (ID3D11Device, ID3D11DeviceContext) = (
+                device.ok_or(BenchError::NoGpu)?,
+                context.ok_or(BenchError::NoGpu)?,
+            );
             let shader = |entry: &[u8]| -> Result<ID3D11ComputeShader, BenchError> {
                 let mut code: Option<ID3DBlob> = None;
                 D3DCompile(
@@ -455,9 +501,14 @@ StructuredBuffer<float4> source : register(t0);
                 )
                 .map_err(failed)?;
                 let code = code.ok_or(BenchError::Unsupported)?;
-                let bytes = std::slice::from_raw_parts(code.GetBufferPointer().cast::<u8>(), code.GetBufferSize());
+                let bytes = std::slice::from_raw_parts(
+                    code.GetBufferPointer().cast::<u8>(),
+                    code.GetBufferSize(),
+                );
                 let mut shader = None;
-                device.CreateComputeShader(bytes, None, Some(&mut shader)).map_err(failed)?;
+                device
+                    .CreateComputeShader(bytes, None, Some(&mut shader))
+                    .map_err(failed)?;
                 shader.ok_or(BenchError::Unsupported)
             };
             let shaders = [shader(b"fp32\0")?, shader(b"fp16\0")?, shader(b"copy\0")?];
@@ -479,17 +530,31 @@ StructuredBuffer<float4> source : register(t0);
             let query = |kind| -> Result<ID3D11Query, BenchError> {
                 let mut query = None;
                 device
-                    .CreateQuery(&D3D11_QUERY_DESC { Query: kind, MiscFlags: 0 }, Some(&mut query))
+                    .CreateQuery(
+                        &D3D11_QUERY_DESC {
+                            Query: kind,
+                            MiscFlags: 0,
+                        },
+                        Some(&mut query),
+                    )
                     .map_err(failed)?;
                 query.ok_or(BenchError::Unsupported)
             };
-            let queries = [query(D3D11_QUERY_TIMESTAMP_DISJOINT)?, query(D3D11_QUERY_TIMESTAMP)?, query(D3D11_QUERY_TIMESTAMP)?];
+            let queries = [
+                query(D3D11_QUERY_TIMESTAMP_DISJOINT)?,
+                query(D3D11_QUERY_TIMESTAMP)?,
+                query(D3D11_QUERY_TIMESTAMP)?,
+            ];
             let name = device
                 .cast::<IDXGIDevice>()
                 .and_then(|dxgi| dxgi.GetAdapter())
                 .and_then(|adapter| adapter.GetDesc())
                 .map(|desc| {
-                    let end = desc.Description.iter().position(|c| *c == 0).unwrap_or(desc.Description.len());
+                    let end = desc
+                        .Description
+                        .iter()
+                        .position(|c| *c == 0)
+                        .unwrap_or(desc.Description.len());
                     String::from_utf16_lossy(&desc.Description[..end])
                 })
                 .unwrap_or_else(|_| "GPU".into());
@@ -516,7 +581,8 @@ StructuredBuffer<float4> source : register(t0);
                     &D3D11_BUFFER_DESC {
                         ByteWidth: elements * 16,
                         Usage: D3D11_USAGE_DEFAULT,
-                        BindFlags: (D3D11_BIND_UNORDERED_ACCESS.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+                        BindFlags: (D3D11_BIND_UNORDERED_ACCESS.0 | D3D11_BIND_SHADER_RESOURCE.0)
+                            as u32,
                         MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
                         StructureByteStride: 16,
                         ..Default::default()
@@ -529,10 +595,14 @@ StructuredBuffer<float4> source : register(t0);
         buffer.ok_or(BenchError::Unsupported)
     }
 
-    unsafe fn unordered(device: &ID3D11Device, buffer: &ID3D11Buffer) -> Result<ID3D11UnorderedAccessView, BenchError> {
+    unsafe fn unordered(
+        device: &ID3D11Device,
+        buffer: &ID3D11Buffer,
+    ) -> Result<ID3D11UnorderedAccessView, BenchError> {
         let mut view = None;
         // SAFETY: a view of the whole buffer, with no explicit descriptor.
-        unsafe { device.CreateUnorderedAccessView(buffer, None, Some(&mut view)) }.map_err(failed)?;
+        unsafe { device.CreateUnorderedAccessView(buffer, None, Some(&mut view)) }
+            .map_err(failed)?;
         view.ok_or(BenchError::Unsupported)
     }
 
@@ -554,7 +624,12 @@ StructuredBuffer<float4> source : register(t0);
                 let waiting = std::time::Instant::now();
                 while timing.Frequency == 0 {
                     self.context
-                        .GetData(disjoint, Some(std::ptr::from_mut(&mut timing).cast()), size, 0)
+                        .GetData(
+                            disjoint,
+                            Some(std::ptr::from_mut(&mut timing).cast()),
+                            size,
+                            0,
+                        )
                         .map_err(failed)?;
                     if waiting.elapsed() > std::time::Duration::from_secs(10) {
                         return Err(BenchError::Failed("the GPU did not finish".into()));
@@ -562,8 +637,12 @@ StructuredBuffer<float4> source : register(t0);
                     std::thread::yield_now();
                 }
                 let (mut first, mut last) = (0u64, 0u64);
-                self.context.GetData(start, Some(std::ptr::from_mut(&mut first).cast()), 8, 0).map_err(failed)?;
-                self.context.GetData(end, Some(std::ptr::from_mut(&mut last).cast()), 8, 0).map_err(failed)?;
+                self.context
+                    .GetData(start, Some(std::ptr::from_mut(&mut first).cast()), 8, 0)
+                    .map_err(failed)?;
+                self.context
+                    .GetData(end, Some(std::ptr::from_mut(&mut last).cast()), 8, 0)
+                    .map_err(failed)?;
                 if timing.Disjoint.as_bool() || timing.Frequency == 0 {
                     return Err(BenchError::Failed("the GPU clock changed mid-run".into()));
                 }
@@ -575,8 +654,10 @@ StructuredBuffer<float4> source : register(t0);
             let values = [loops, stride, count, 0];
             // SAFETY: 16 bytes into a 16-byte constant buffer.
             unsafe {
-                self.context.UpdateSubresource(&self.params, 0, None, values.as_ptr().cast(), 0, 0);
-                self.context.CSSetConstantBuffers(0, Some(&[Some(self.params.clone())]));
+                self.context
+                    .UpdateSubresource(&self.params, 0, None, values.as_ptr().cast(), 0, 0);
+                self.context
+                    .CSSetConstantBuffers(0, Some(&[Some(self.params.clone())]));
             }
         }
     }
@@ -596,7 +677,12 @@ StructuredBuffer<float4> source : register(t0);
             // SAFETY: shader, view and context belong to the same device.
             unsafe {
                 self.context.CSSetShader(shader, None);
-                self.context.CSSetUnorderedAccessViews(0, 1, Some(&Some(self.output.clone())), None);
+                self.context.CSSetUnorderedAccessViews(
+                    0,
+                    1,
+                    Some(&Some(self.output.clone())),
+                    None,
+                );
             }
             self.timed(|context| unsafe { context.Dispatch((THREADS / 256) as u32, 1, 1) })
         }
@@ -608,18 +694,26 @@ StructuredBuffer<float4> source : register(t0);
                     let source = structured(&self.device, COPY_ELEMENTS)?;
                     let target = structured(&self.device, COPY_ELEMENTS)?;
                     let mut view = None;
-                    self.device.CreateShaderResourceView(&source, None, Some(&mut view)).map_err(failed)?;
-                    self.copy = Some((view.ok_or(BenchError::Unsupported)?, unordered(&self.device, &target)?));
+                    self.device
+                        .CreateShaderResourceView(&source, None, Some(&mut view))
+                        .map_err(failed)?;
+                    self.copy = Some((
+                        view.ok_or(BenchError::Unsupported)?,
+                        unordered(&self.device, &target)?,
+                    ));
                 }
             }
-            let Some((source, target)) = self.copy.clone() else { return Err(BenchError::Unsupported) };
+            let Some((source, target)) = self.copy.clone() else {
+                return Err(BenchError::Unsupported);
+            };
             self.set_params(0, COPY_GROUPS * 256, COPY_ELEMENTS);
             let rounds = 4;
             // SAFETY: as above.
             unsafe {
                 self.context.CSSetShader(&self.shaders[2], None);
                 self.context.CSSetShaderResources(0, Some(&[Some(source)]));
-                self.context.CSSetUnorderedAccessViews(0, 1, Some(&Some(target)), None);
+                self.context
+                    .CSSetUnorderedAccessViews(0, 1, Some(&Some(target)), None);
             }
             let seconds = self.timed(|context| {
                 for _ in 0..rounds {
@@ -641,5 +735,31 @@ mod platform {
     /// The shipped macOS app benchmarks with Metal.
     pub(super) fn open() -> Result<Box<dyn Backend>, BenchError> {
         Err(BenchError::Unsupported)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{COMPUTE, COPY};
+
+    /// Compiles each kernel the way wgpu would, catching WGSL mistakes on
+    /// machines without a Vulkan GPU.
+    #[test]
+    fn wgsl_kernels_validate() {
+        let sources = [
+            COMPUTE.replace("SCALAR", "f32"),
+            format!("enable f16;\n{}", COMPUTE.replace("SCALAR", "f16")),
+            COPY.to_string(),
+        ];
+        for source in sources {
+            let module = naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|err| panic!("{err:?}"));
+        }
     }
 }

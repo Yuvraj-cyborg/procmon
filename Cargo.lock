@@ -5138,6 +5138,7 @@ dependencies = [
  "libc",
  "libproc",
  "mach2 0.7.0",
+ "naga",
  "objc2-foundation 0.3.2",
  "rayon",
  "serde",
